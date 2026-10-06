@@ -1,0 +1,66 @@
+name: "Naryad (work order)"
+description: "One naryad = one issue = one branch = one PR (AGENTS.md §6)"
+labels: ["naryad"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Rules (AGENTS.md): §1 code is the truth — facts verified by grep/run, not by docs;
+        §6 branch → PR → blocking jobs green on the merge commit; one commit per logical step;
+        the report states assumptions and what is unresolved.
+  - type: input
+    id: card
+    attributes:
+      label: Plan card
+      description: "ID from docs/PLAN.md, e.g. H-104"
+    validations: { required: true }
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: ["P0", "P1", "P2"]
+    validations: { required: true }
+  - type: dropdown
+    id: klass
+    attributes:
+      label: Class
+      options: ["[core]", "[security]", "[feature]", "[process]", "[docs]", "[bugfix]"]
+    validations: { required: true }
+  - type: textarea
+    id: facts
+    attributes:
+      label: Fact base (verified)
+      description: "file:line, reproducible command/output. Only verified facts."
+    validations: { required: true }
+  - type: textarea
+    id: task
+    attributes:
+      label: Task
+    validations: { required: true }
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope — files/dirs that may change
+      description: "Anything outside this list needs a note in the report."
+    validations: { required: true }
+  - type: textarea
+    id: done
+    attributes:
+      label: Done criteria
+      description: "Tests + blocking CI green on the merge commit + docs updated"
+    validations: { required: true }
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      description: "Issue/card IDs that must be merged first; empty if independent"
+  - type: checkboxes
+    id: owner_decision
+    attributes:
+      label: Owner decision
+      options:
+        - label: "This naryad contains an owner decision point (AGENTS.md §3). The decision is written below before work starts."
+  - type: textarea
+    id: decision
+    attributes:
+      label: Owner decision text (if ticked)

@@ -1,0 +1,9 @@
+# Mutating (POST/PUT/PATCH/DELETE) or moderation/admin routes that are intentionally callable WITHOUT the guard.
+# Format:  METHOD /api/path/:param   # reason (mandatory)
+# Everything else must call requireUser/requireRole/requireSession in the handler body.
+# Read-only public GET routes outside /api/mod and /api/admin need no entry.
+
+# Uncomment when the route exists (stale entries are reported):
+# POST /api/radio/listen   # anonymous listen heartbeat; batched, rate limited by IP hash
+# POST /api/reports        # legal/contact form; rate limited, captcha-free, no auth by design
+# POST /api/auth/:path     # Auth.js endpoints

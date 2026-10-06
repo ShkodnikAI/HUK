@@ -1,0 +1,8 @@
+# The perimeter: CI surface, invariant scripts, scanner config, dependency locks, and the method itself.
+.github/            @ShkodnikAI
+scripts/ci/         @ShkodnikAI
+.gitleaks.toml      @ShkodnikAI
+AGENTS.md           @ShkodnikAI
+policy/             @ShkodnikAI
+bun.lock            @ShkodnikAI
+prisma/migrations/  @ShkodnikAI
