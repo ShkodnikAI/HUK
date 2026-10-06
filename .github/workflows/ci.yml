@@ -11,7 +11,7 @@ jobs:
     name: invariants (blocking)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - name: Route authorization guard (S1)
@@ -27,7 +27,7 @@ jobs:
     name: gitleaks (blocking)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - uses: gitleaks/gitleaks-action@v2
         env:
@@ -39,7 +39,7 @@ jobs:
     outputs:
       has_app: ${{ steps.check.outputs.has_app }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: check
         # hashFiles() is not allowed in jobs.<id>.if, only inside steps;
         # this job exposes the result so `app` can be skipped until H-003.
@@ -61,7 +61,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:ci@localhost:5432/huk
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bunx prisma validate
@@ -77,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - name: PR must not be far behind main
         run: |
