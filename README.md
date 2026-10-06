@@ -26,9 +26,11 @@ themselves — with AI-assisted moderation and transparent, deterministic charts
 | [`docs/adr/`](docs/adr/) | Architecture decision records |
 | [`policy/moderation-policy.md`](policy/moderation-policy.md) | What is and is not allowed |
 
-## Stack (planned)
-Next.js 16 (App Router) · TypeScript · Tailwind + shadcn/ui · next-intl · Auth.js · PostgreSQL + Prisma ·
-a single worker process · Docker Compose on one VPS behind Cloudflare.
+## Stack
+Next.js 16 (App Router) · TypeScript (strict) · Tailwind 4 + shadcn/ui tokens · zod-validated env ·
+PostgreSQL 16 + Prisma 6 (migrations only, no `db push`) · Vitest · ESLint · bun · a single worker
+process (src/worker) · Docker Compose (`web`, `worker`, `postgres:16`) on one VPS behind Cloudflare.
+`next-intl` and Auth.js arrive with H-105/H-102 respectively.
 
 ## Contributing
 Work happens through naryads: open an issue from the *Naryad* template that references a card in
