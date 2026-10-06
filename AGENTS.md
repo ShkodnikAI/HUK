@@ -8,8 +8,8 @@
 
 | Role | Who | Does | Never does |
 |---|---|---|---|
-| **Owner** | ShkodnikAI | Sets direction, decides irreversible/identity matters, merges to `main` | — |
-| **Agent** | the coding agent | Implements one naryad per branch/PR, reports honestly | Merges, edits `.github/` or `scripts/ci/` without a naryad that says so, self-certifies |
+| **Owner** | ShkodnikAI | Sets direction, decides irreversible/identity matters; merge authority delegated to the Agent (D11) | — |
+| **Agent** | the coding agent | Implements one naryad per branch/PR, reports honestly, merges `main` after all blocking CI is green on the merge commit (D11) | Edits `.github/` or `scripts/ci/` without a naryad that says so, self-certifies, merges with red or missing blocking CI |
 | **Auditor** | Claude (in chat) | Reviews PRs against the naryad and `docs/AUDIT.md`, issues a verdict | Writes feature code, merges |
 
 A naryad (work order) is a GitHub issue created from `.github/ISSUE_TEMPLATE/naryad.yml`.
