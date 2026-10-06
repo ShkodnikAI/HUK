@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: huk
+      POSTGRES_PASSWORD: huk
+      POSTGRES_DB: huk
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U huk -d huk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      target: web
+    environment:
+      DATABASE_URL: postgresql://huk:huk@postgres:5432/huk
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env (openssl rand -base64 32)}
+      AUTH_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Phase 1: migrations are applied by the web container before start
+    # (single VPS; the worker never migrates — ARCHITECTURE §2).
+    command: ["sh", "-c", "bunx prisma migrate deploy && bun run start"]
+
+  worker:
+    build:
+      context: .
+      target: worker
+    environment:
+      DATABASE_URL: postgresql://huk:huk@postgres:5432/huk
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env (openssl rand -base64 32)}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # PID 1 is the worker process; kill -0 proves it is alive.
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pgdata: {}
