@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Трек: сид-композиция, джингл или загрузка слушателя
+model Track {
+  id           String    @id @default(cuid())
+  title        String
+  artist       String    @default("Неизвестен")
+  uploaderName String    @default("Гость")
+  uploaderId   String    @default("")
+  source       String    @default("USER") // SEED | USER | JINGLE
+  filePath     String
+  mimeType     String    @default("audio/mpeg")
+  durationSec  Float     @default(0)
+  status       String    @default("PENDING") // APPROVED | PENDING | REJECTED
+  genre        String    @default("")
+  mood         String    @default("")
+  // ИИ-модерация
+  aiVerdict    String    @default("") // APPROVE | REJECT | REVIEW | ""
+  aiConfidence Float     @default(0)
+  aiSummary    String    @default("")
+  aiDetails    String    @default("[]") // JSON [{category, severity, evidence}]
+  transcript   String    @default("")
+  playsCount   Int       @default(0)
+  createdAt    DateTime  @default(now())
+  moderatedAt  DateTime?
+  moderatedBy  String? // "ai" | "human"
+
+  playlistTracks PlaylistTrack[]
+  sessions       BroadcastSession[]
+  modLogs        ModerationLog[]
+}
+
+// Тематический плейлист = программа передач
+model Playlist {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String   @default("")
+  emoji       String   @default("🎧")
+  createdAt   DateTime @default(now())
+
+  tracks   PlaylistTrack[]
+  sessions BroadcastSession[]
+}
+
+model PlaylistTrack {
+  playlistId String
+  trackId    String
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  track    Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([playlistId, trackId])
+}
+
+// Сессия эфира: что и когда крутилось (виртуальная шкала времени)
+model BroadcastSession {
+  id         String   @id @default(cuid())
+  trackId    String
+  playlistId String?
+  kind       String   @default("SONG") // SONG | JINGLE
+  startedAt  DateTime
+  endedAt    DateTime
+
+  track    Track     @relation(fields: [trackId], references: [id])
+  playlist Playlist? @relation(fields: [playlistId], references: [id])
+
+  @@index([startedAt])
+}
+
+// Глобальное состояние станции (одна строка id="main")
+model StationState {
+  id                String   @id @default("main")
+  currentPlaylistId String?
+  pendingPlaylistId String?
+  lastJingleAt      Int      @default(0) // кол-во SONG-сессий с последнего джингла
+  nextQueue         String   @default("[]") // JSON [{trackId, kind}]
+  updatedAt         DateTime @updatedAt
+}
+
+// Аудит-лог модерации: каждый шаг конвейера фиксируется
+model ModerationLog {
+  id        String   @id @default(cuid())
+  trackId   String
+  stage     String // TECHNICAL | ASR | LLM_POLICY | HUMAN | ENROLL
+  verdict   String // OK | FLAG | REJECT | APPROVE | REVIEW | INFO
+  payload   String   @default("{}")
+  createdAt DateTime @default(now())
+
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@index([trackId])
+}
