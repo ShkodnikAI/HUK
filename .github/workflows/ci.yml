@@ -33,10 +33,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  detect:
+    name: detect app scaffold
+    runs-on: ubuntu-latest
+    outputs:
+      has_app: ${{ steps.check.outputs.has_app }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        # hashFiles() is not allowed in jobs.<id>.if, only inside steps;
+        # this job exposes the result so `app` can be skipped until H-003.
+        run: |
+          if [ -f package.json ]; then echo "has_app=true" >> "$GITHUB_OUTPUT"; else echo "has_app=false" >> "$GITHUB_OUTPUT"; fi
+
   app:
     name: lint-typecheck-test-build (blocking)
     runs-on: ubuntu-latest
-    if: hashFiles('package.json') != ''
+    needs: detect
+    if: needs.detect.outputs.has_app == 'true'
     services:
       postgres:
         image: postgres:16
