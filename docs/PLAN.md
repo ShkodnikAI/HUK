@@ -12,12 +12,13 @@ Gates between waves are checked by the Auditor and signed off by the Owner.
 
 ## W0 — Reset and guardrails (P0)
 
-**H-001 — Tag the prototype and clean `main`.** `[process]` `OD` (history is not rewritten; owner confirms)
-Scope: tag `prototype-v0.2.1`; run `scripts/cleanup-w0.sh` (removes `db/custom.db`, `upload/`,
-jingle/TTS scripts, VECTOR/DJ strings, generated shadcn files that will be re-generated, old
-README); move the four reusable pieces to `legacy/` (sync hook, visualizer, ffprobe checks,
-procedural music generator) for porting in W1–W2.
-Done: `git ls-files` has no binary > 1 MB and no `*.db`; `legacy/` has a README listing what to port and where; CI "large-files" job green.
+**H-001 — Finish the reset.** `[process]` `OD` (D7 decided: prototype restored as the tag `prototype-v0.2.1`, option b)
+Scope: `legacy/` holds the four prototype reference files, restored by the Owner (commit
+`9032361`; `use-radio.ts`, `visualizer.tsx`, `gen_music.py` byte-identical to `24d0c33`,
+`technical-check.ts` the hand-finalised extraction) for porting in W1–W2; the tag is pushed
+to origin (audio/SQLite reachable only via the tag); retire `scripts/cleanup-w0.sh`
+(obsolete — `main` was already cleaned by the Owner).
+Done: `git ls-files` has no `scripts/cleanup-w0.sh`, no binary > 1 MB and no `*.db`; `legacy/` contains exactly the four files + `README.md`; CI "large-files" job green.
 
 **H-002 — Governance and CI skeleton.** `[process]` (this package)
 Scope: `AGENTS.md`, `CLAUDE.md`, `.github/**`, `docs/**`, `policy/**`, `scripts/ci/**`, `.gitleaks.toml`.
