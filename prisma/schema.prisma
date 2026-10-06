@@ -1,0 +1,490 @@
+// HUK data model v2 (draft for naryad H-101). Postgres. Migrations only (`prisma migrate`), never `db push` in prod.
+// Auth models follow the Auth.js Prisma adapter shape; keep them in sync with the adapter version in use.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── enums ─────────────────────────
+
+enum Role {
+  LISTENER
+  ARTIST
+  MODERATOR
+  ADMIN
+}
+
+enum TrackStatus {
+  DRAFT      // created, declarations incomplete
+  PENDING    // in moderation
+  APPROVED   // may be scheduled/served
+  REJECTED
+  TAKEN_DOWN // removed after approval (report/legal)
+  SUSPENDED  // source changed or unavailable; awaiting re-check
+}
+
+enum SourceProvider {
+  AUDIUS
+  DIRECT_URL
+  SEED
+}
+
+enum LicenseScope {
+  RADIO_ONLY
+  RADIO_AND_PLAYLISTS
+}
+
+enum TermKind {
+  LANGUAGE
+  STYLE
+  DIRECTION
+}
+
+enum ModStage {
+  DECLARATION
+  TECHNICAL
+  FINGERPRINT
+  ASR
+  POLICY
+  HUMAN
+  TEXT_CHECK
+}
+
+enum ModVerdict {
+  PASS
+  APPROVE
+  REJECT
+  REVIEW
+  SKIPPED
+  ERROR
+}
+
+enum ReactionType {
+  LIKE
+  DISLIKE
+}
+
+enum ListenMode {
+  RADIO
+  PLAYLIST
+}
+
+enum PlaylistVisibility {
+  PRIVATE
+  UNLISTED
+  PUBLIC
+}
+
+enum CommentStatus {
+  HELD
+  VISIBLE
+  HIDDEN
+  REMOVED
+}
+
+enum ReportTarget {
+  TRACK
+  COMMENT
+  PLAYLIST
+  USER
+}
+
+enum ReportStatus {
+  OPEN
+  TRIAGED
+  ACTIONED
+  DISMISSED
+  APPEALED
+}
+
+// ───────────────────────── identity ─────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  role          Role      @default(LISTENER)
+  locale        String    @default("en")
+  reputation    Float     @default(1.0) // vote weight; derived by antifraud jobs
+  bannedUntil   DateTime?
+  createdAt     DateTime  @default(now())
+  deletedAt     DateTime?
+
+  accounts      Account[]
+  sessions      Session[]
+  artist        ArtistProfile?
+  consents      Consent[]
+  reactions     Reaction[]
+  playlists     Playlist[]
+  comments      Comment[]
+  reports       Report[]   @relation("Reporter")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model ArtistProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  handle      String   @unique
+  displayName String
+  bio         String   @default("")
+  links       Json     @default("[]") // [{label,url}] — whitelisted domains only, validated in service
+  createdAt   DateTime @default(now())
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tracks Track[]
+}
+
+// Which legal document version a user accepted, and when.
+model Consent {
+  id        String   @id @default(cuid())
+  userId    String
+  document  String   // "tos" | "privacy" | "artist-terms"
+  version   String
+  ipHash    String?  // salted, rotating; never a raw IP
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, document])
+}
+
+// ───────────────────────── catalogue ─────────────────────────
+
+model Track {
+  id                String       @id @default(cuid())
+  artistId          String?      // null for SEED tracks
+  title             String
+  status            TrackStatus  @default(DRAFT)
+  durationSec       Float        @default(0)
+  language          String?      // BCP-47 primary language of lyrics; null for instrumental
+  instrumental      Boolean      @default(false)
+  // declarations (author-provided)
+  aiGenerated       Boolean      @default(false)
+  aiTool            String?
+  aiPlanAtCreation  String?
+  humanContribution String?
+  licenseScope      LicenseScope @default(RADIO_ONLY)
+  rightsDeclaredAt  DateTime?
+  // AI-assisted moderation outputs
+  aiConfidence      Float?
+  aiSummary         String?
+  moderatedBy       String?      // "ai" | userId
+  moderatedAt       DateTime?
+  available         Boolean      @default(true) // source reachable
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  artist       ArtistProfile?      @relation(fields: [artistId], references: [id], onDelete: SetNull)
+  source       TrackSource?
+  terms        TrackTerm[]
+  runs         ModerationRun[]
+  slots        BroadcastSlot[]
+  reactions    Reaction[]
+  listens      ListenEvent[]
+  scores       TrackScore[]
+  chartEntries ChartEntry[]
+  playlistItems PlaylistItem[]
+  comments     Comment[]
+  restrictions RegionRestriction[]
+
+  @@index([status, available])
+  @@index([artistId])
+}
+
+// We store links and hashes, never user audio (ADR-0002).
+model TrackSource {
+  id           String         @id @default(cuid())
+  trackId      String         @unique
+  provider     SourceProvider
+  externalId   String?        // Audius track id etc.
+  url          String         // stream/file URL (https)
+  contentHash  String?        // sha256 recorded at moderation
+  etag         String?
+  byteLength   BigInt?
+  verifiedAt   DateTime?
+  failCount    Int            @default(0)
+  lastError    String?
+
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+}
+
+model TaxonomyTerm {
+  id       String   @id @default(cuid())
+  kind     TermKind
+  slug     String
+  label    String
+  parentId String?
+
+  parent   TaxonomyTerm?  @relation("TermTree", fields: [parentId], references: [id])
+  children TaxonomyTerm[] @relation("TermTree")
+  tracks   TrackTerm[]
+
+  @@unique([kind, slug])
+}
+
+model TrackTerm {
+  trackId   String
+  termId    String
+  confirmed Boolean @default(false) // false = AI suggestion, true = author/moderator confirmed
+
+  track Track        @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  term  TaxonomyTerm @relation(fields: [termId], references: [id], onDelete: Cascade)
+
+  @@id([trackId, termId])
+}
+
+// One row per pipeline stage execution: the audit trail of moderation.
+model ModerationRun {
+  id            String     @id @default(cuid())
+  trackId       String
+  stage         ModStage
+  verdict       ModVerdict
+  confidence    Float?
+  payload       Json       @default("{}") // evidence; transcripts expire (retention job)
+  costMicroUsd  Int        @default(0)
+  policyVersion String?
+  createdAt     DateTime   @default(now())
+
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@index([trackId, createdAt])
+}
+
+model RegionRestriction {
+  trackId     String
+  countryCode String // ISO 3166-1 alpha-2
+  reason      String
+  createdAt   DateTime @default(now())
+
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([trackId, countryCode])
+}
+
+// ───────────────────────── broadcast ─────────────────────────
+
+// Written only by the worker (single writer, ADR-0004).
+model BroadcastSlot {
+  id       String   @id @default(cuid())
+  seq      BigInt   @unique
+  trackId  String
+  startsAt DateTime
+  endsAt   DateTime
+  pool     String   @default("rest") // "top" | "fresh" | "rest" — which quota picked it
+
+  track Track @relation(fields: [trackId], references: [id])
+
+  @@index([startsAt])
+}
+
+model StationState {
+  id          String   @id @default("main")
+  lastSeq     BigInt   @default(0)
+  workerBeat  DateTime?
+  updatedAt   DateTime @updatedAt
+}
+
+// ───────────────────────── engagement ─────────────────────────
+
+model Reaction {
+  userId    String
+  trackId   String
+  type      ReactionType
+  createdAt DateTime     @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([userId, trackId])
+  @@index([trackId, type])
+}
+
+// Raw listening telemetry; rows older than the retention window are aggregated and deleted.
+model ListenEvent {
+  id         String     @id @default(cuid())
+  userId     String?
+  anonHash   String?    // salted hash of anon id; rotating salt
+  trackId    String
+  mode       ListenMode
+  msListened Int
+  completed  Boolean    @default(false)
+  skippedEarly Boolean  @default(false)
+  createdAt  DateTime   @default(now())
+
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@index([trackId, createdAt])
+  @@index([createdAt])
+}
+
+model TrackScore {
+  trackId     String
+  categoryKey String   // "all" | "lang:en" | "style:synthwave" | "instrumental" | combos
+  score       Float
+  nEff        Float
+  voters      Int
+  updatedAt   DateTime @updatedAt
+
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([trackId, categoryKey])
+  @@index([categoryKey, score])
+}
+
+model ChartSnapshot {
+  id          String   @id @default(cuid())
+  weekStart   DateTime
+  categoryKey String
+  createdAt   DateTime @default(now())
+
+  entries ChartEntry[]
+
+  @@unique([weekStart, categoryKey])
+}
+
+model ChartEntry {
+  snapshotId String
+  rank       Int
+  trackId    String
+  score      Float
+
+  snapshot ChartSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  track    Track         @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([snapshotId, rank])
+}
+
+// ───────────────────────── playlists & comments ─────────────────────────
+
+model Playlist {
+  id         String             @id @default(cuid())
+  ownerId    String
+  name       String
+  description String            @default("")
+  visibility PlaylistVisibility @default(PRIVATE)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  owner User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  items PlaylistItem[]
+
+  @@index([ownerId])
+}
+
+model PlaylistItem {
+  playlistId String
+  trackId    String
+  position   Int
+  addedAt    DateTime @default(now())
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  track    Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([playlistId, trackId])
+}
+
+model Comment {
+  id        String        @id @default(cuid())
+  trackId   String
+  authorId  String?       // null after account deletion (anonymised)
+  parentId  String?
+  body      String
+  status    CommentStatus @default(HELD)
+  createdAt DateTime      @default(now())
+
+  track    Track     @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  author   User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  parent   Comment?  @relation("Thread", fields: [parentId], references: [id])
+  replies  Comment[] @relation("Thread")
+
+  @@index([trackId, createdAt])
+}
+
+// ───────────────────────── reports & audit ─────────────────────────
+
+model Report {
+  id           String       @id @default(cuid())
+  targetType   ReportTarget
+  targetId     String
+  reporterId   String?
+  reporterContact String?
+  reason       String
+  category     String?      // AI triage output
+  urgency      Int          @default(0)
+  status       ReportStatus @default(OPEN)
+  resolution   String?      // statement of reasons shown to the affected user
+  resolvedById String?
+  createdAt    DateTime     @default(now())
+  resolvedAt   DateTime?
+
+  reporter User? @relation("Reporter", fields: [reporterId], references: [id], onDelete: SetNull)
+
+  @@index([status, urgency])
+  @@index([targetType, targetId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?  // user id, or null for system/worker
+  actorKind  String   @default("user") // user | worker | ai
+  action     String
+  targetType String?
+  targetId   String?
+  payload    Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}
+
+// Daily spend ledger behind budget.guard() (S6).
+model BudgetLedger {
+  day          DateTime // UTC date
+  provider     String
+  costMicroUsd BigInt   @default(0)
+  calls        Int      @default(0)
+
+  @@id([day, provider])
+}

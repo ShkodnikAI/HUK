@@ -1,0 +1,86 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+
+jobs:
+  invariants:
+    name: invariants (blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Route authorization guard (S1)
+        run: node scripts/ci/check-route-auth.mjs
+      - name: No raw outbound HTTP (S4)
+        run: node scripts/ci/check-no-raw-fetch.mjs
+      - name: Docs are English (AGENTS §9)
+        run: node scripts/ci/check-docs-language.mjs
+      - name: No large files / databases in git
+        run: node scripts/ci/check-large-files.mjs
+
+  secrets:
+    name: gitleaks (blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  detect:
+    name: detect app scaffold
+    runs-on: ubuntu-latest
+    outputs:
+      has_app: ${{ steps.check.outputs.has_app }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        # hashFiles() is not allowed in jobs.<id>.if, only inside steps;
+        # this job exposes the result so `app` can be skipped until H-003.
+        run: |
+          if [ -f package.json ]; then echo "has_app=true" >> "$GITHUB_OUTPUT"; else echo "has_app=false" >> "$GITHUB_OUTPUT"; fi
+
+  app:
+    name: lint-typecheck-test-build (blocking)
+    runs-on: ubuntu-latest
+    needs: detect
+    if: needs.detect.outputs.has_app == 'true'
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: ci, POSTGRES_DB: huk }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:ci@localhost:5432/huk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bunx prisma validate
+      - run: bunx prisma migrate deploy
+        if: hashFiles('prisma/migrations/**') != ''
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run build
+
+  branch-freshness:
+    name: branch-freshness (blocking)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: PR must not be far behind main
+        run: |
+          behind=$(git rev-list --count HEAD..origin/main || echo 0)
+          echo "behind main by $behind commits"
+          [ "$behind" -le 20 ] || { echo "Rebase onto main first"; exit 1; }
