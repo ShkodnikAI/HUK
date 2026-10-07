@@ -13,6 +13,13 @@ import { makeAuthOptions } from "@/server/auth/options";
 import { withSignInRateLimit } from "@/server/auth/signin-limit";
 import { loadEnv } from "@/server/env";
 import { SESSION_COOKIE, requireRole, requireSession, requireUser } from "@/server/guard";
+import type { SafeLoader } from "@/server/net/safe-fetch";
+import { createDefaultLoader } from "@/server/net/safe-fetch";
+import { verifyTrackSource, withModerationFile, sweepStaleTempFiles } from "@/server/sources/verify";
+import { resolveAudiusTrack } from "@/server/sources/audius";
+import http from "node:http";
+import { tmpdir } from "node:os";
+import { mkdtempSync, utimesSync, existsSync, statSync, rmSync } from "node:fs";
 import { route } from "@/server/http/handler";
 import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
 import { startMaintenance, type MaintenanceJob } from "@/server/maintenance/runner";
@@ -1618,5 +1625,298 @@ describe.skipIf(!databaseUrl)("artist invites and onboarding (H-209)", () => {
     }
     expect(last!.status).toBe(429);
     expect(Number(last!.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+});
+
+describe.skipIf(!databaseUrl)("source verification and moderation downloads (H-202)", () => {
+  const db = makeClient();
+  const realLoader = createDefaultLoader();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  /** The H-201 seam: a loader that routes every request to the local server. */
+  function localLoaderFn(port: number): SafeLoader {
+    return async (req) => {
+      const localUrl = new URL(`http://127.0.0.1:${port}${req.url.pathname}${req.url.search}`);
+      return realLoader({
+        ...req,
+        url: localUrl,
+        pinnedAddress: "127.0.0.1",
+        headers: { ...req.headers, host: req.headers.host }, // keep the original Host
+      });
+    };
+  }
+
+  type SourceServer = {
+    port: number;
+    hits: { head: number; get: number };
+    close: () => Promise<void>;
+  };
+
+  function startSourceServer(opts: { body: Buffer; etag?: string; headStatus?: number }): Promise<SourceServer> {
+    const state: SourceServer = {
+      port: 0,
+      hits: { head: 0, get: 0 },
+      close: async () => {},
+    };
+    const server = http.createServer((req, res) => {
+      if (req.method === "HEAD") {
+        state.hits.head++;
+        if (opts.headStatus !== undefined) {
+          res.writeHead(opts.headStatus, { etag: opts.etag ?? "" });
+          res.end();
+          return;
+        }
+        res.writeHead(200, {
+          etag: opts.etag ?? "",
+          "content-length": String(opts.body.byteLength),
+          "accept-ranges": "bytes",
+        });
+        res.end();
+        return;
+      }
+      state.hits.get++;
+      res.writeHead(200, { etag: opts.etag ?? "", "content-length": String(opts.body.byteLength), "accept-ranges": "bytes" });
+      res.end(opts.body);
+    });
+    return new Promise((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        state.port = (server.address() as { port: number }).port;
+        state.close = () => new Promise<void>((r) => server.close(() => r()));
+        resolve(state);
+      });
+    });
+  }
+
+  const seamFor = (port: number, extra?: { env?: Record<string, unknown> }) => ({
+    loader: localLoaderFn(port),
+    resolver: async () => ["203.0.113.10"], // TEST-NET-3: passes classification
+    portAllowlist: [port, 443],
+    env: extra?.env as never,
+    client: db,
+  });
+
+  async function trackWithSource(data: {
+    etag?: string | null;
+    byteLength?: bigint | null;
+    contentHash?: string | null;
+    verifiedAt?: Date | null;
+    failCount?: number;
+    status?: string;
+    available?: boolean;
+  }) {
+    const track = await db.track.create({
+      data: { title: "src", status: (data.status ?? "APPROVED") as never, available: data.available ?? true, durationSec: 60 },
+    });
+    await db.trackSource.create({
+      data: {
+        trackId: track.id,
+        provider: "DIRECT_URL",
+        url: `https://author-host.test/file.mp3`,
+        etag: data.etag ?? null,
+        byteLength: data.byteLength ?? null,
+        contentHash: data.contentHash ?? null,
+        verifiedAt: data.verifiedAt ?? null,
+        failCount: data.failCount ?? 0,
+      },
+    });
+    return track;
+  }
+
+  it("an unchanged source stays fresh: verifiedAt refreshes, failCount resets", async () => {
+    const body = Buffer.alloc(1024, 7);
+    const server = await startSourceServer({ body, etag: '"v1"' });
+    try {
+      const track = await trackWithSource({
+        etag: '"v1"',
+        byteLength: BigInt(body.byteLength),
+        contentHash: createHash("sha256").update(body).digest("hex"), // baseline recorded
+        verifiedAt: new Date(), // hash verified recently: no full download due
+        failCount: 2,
+      });
+      const outcome = await verifyTrackSource(track.id, seamFor(server.port));
+      expect(outcome.outcome).toBe("fresh");
+      const src = await db.trackSource.findUniqueOrThrow({ where: { trackId: track.id } });
+      expect(src.failCount).toBe(0);
+      expect(src.verifiedAt!.getTime()).toBeGreaterThan(Date.now() - 60_000);
+      expect(server.hits.head).toBe(1);
+      expect(server.hits.get).toBe(0); // full hash not due within SOURCE_FULL_HASH_DAYS
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("a full hash runs when none is stored and gets persisted", async () => {
+    const body = Buffer.alloc(2048, 9);
+    const server = await startSourceServer({ body, etag: '"v1"' });
+    try {
+      const track = await trackWithSource({ etag: '"v1"', byteLength: BigInt(body.byteLength), contentHash: null, verifiedAt: new Date() });
+      const outcome = await verifyTrackSource(track.id, seamFor(server.port));
+      expect(outcome.outcome).toBe("fresh");
+      if (outcome.outcome === "fresh") expect(outcome.fullHash).toBe(createHash("sha256").update(body).digest("hex"));
+      const src = await db.trackSource.findUniqueOrThrow({ where: { trackId: track.id } });
+      expect(src.contentHash).toBe(createHash("sha256").update(body).digest("hex"));
+      expect(server.hits.get).toBe(1); // the full download happened
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("changed bytes suspend the track and queue re-moderation with an audit entry", async () => {
+    const server = await startSourceServer({ body: Buffer.alloc(2048, 1), etag: '"v2-changed"' });
+    try {
+      const track = await trackWithSource({ etag: '"v1"', byteLength: 1024n, verifiedAt: new Date() });
+      const outcome = await verifyTrackSource(track.id, seamFor(server.port));
+      expect(outcome.outcome).toBe("mismatch");
+      const refreshed = await db.track.findUniqueOrThrow({ where: { id: track.id } });
+      expect(refreshed.status).toBe("SUSPENDED");
+      const runs = await db.moderationRun.findMany({ where: { trackId: track.id } });
+      expect(runs).toHaveLength(1);
+      expect(runs[0].verdict).toBe("REVIEW");
+      expect(JSON.stringify(runs[0].payload)).toContain("source verification mismatch");
+      const audits = await db.auditLog.findMany({ where: { action: "source.mismatch" } });
+      expect(audits).toHaveLength(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("repeated transport failures exhaust SOURCE_MAX_FAILS -> available=false; success heals", async () => {
+    const body = Buffer.alloc(512, 3);
+    const server = await startSourceServer({ body, etag: '"v1"' });
+    try {
+      const track = await trackWithSource({ etag: '"v1"', byteLength: BigInt(body.byteLength), failCount: 0, verifiedAt: new Date() });
+      const seam = seamFor(1, { env: { SOURCE_FULL_HASH_DAYS: 7, SOURCE_MAX_FAILS: 2, AUDIUS_ENABLED: false } }); // port 1: nothing listens -> ECONNREFUSED
+      // Failure 1
+      let outcome = await verifyTrackSource(track.id, seam);
+      expect(outcome).toMatchObject({ outcome: "unavailable", failCount: 1 });
+      // Failure 2 -> cap reached
+      outcome = await verifyTrackSource(track.id, seam);
+      expect(outcome).toMatchObject({ outcome: "unavailable", failCount: 2 });
+      expect((await db.track.findUniqueOrThrow({ where: { id: track.id } })).available).toBe(false);
+      expect(await db.auditLog.count({ where: { action: "source.unavailable" } })).toBe(1);
+
+      // The transport works again: success resets the counter and heals availability.
+      const healed = await verifyTrackSource(track.id, seamFor(server.port));
+      expect(healed.outcome).toBe("fresh");
+      const src = await db.trackSource.findUniqueOrThrow({ where: { trackId: track.id } });
+      expect(src.failCount).toBe(0);
+      expect((await db.track.findUniqueOrThrow({ where: { id: track.id } })).available).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("moderation temp files are removed on success, on error, and the sweep clears stale dirs", async () => {
+    const body = Buffer.alloc(4096, 5);
+    const server = await startSourceServer({ body, etag: '"v1"' });
+    try {
+      const track = await trackWithSource({ etag: '"v1"', byteLength: BigInt(body.byteLength), contentHash: createHash("sha256").update(body).digest("hex"), verifiedAt: new Date() });
+
+      // Success path: fn sees the file (0700 dir), everything is gone after.
+      let seenPath = "";
+      const file = await withModerationFile(track.id, async (f) => {
+        seenPath = f.path;
+        expect(f.bytes).toBe(body.byteLength);
+        expect(f.sha256).toBe(createHash("sha256").update(body).digest("hex"));
+        expect(existsSync(f.path)).toBe(true);
+        expect((statSync(dirname(f.path)).mode & 0o777) === 0o700).toBe(true);
+        return f;
+      }, seamFor(server.port));
+      expect(file.path).toBe(seenPath);
+      expect(existsSync(dirname(file.path))).toBe(false);
+
+      // Error path: fn throws, cleanup still runs.
+      await expect(
+        withModerationFile(track.id, async () => {
+          throw new Error("moderation exploded");
+        }, seamFor(server.port)),
+      ).rejects.toThrow("moderation exploded");
+      expect(readdirSync(tmpdir()).filter((e) => e.startsWith("huk-mod-"))).toHaveLength(0);
+
+      // Abort path: the download itself fails (nothing listens on port 1).
+      await expect(
+        withModerationFile(track.id, async () => "never", seamFor(1)),
+      ).rejects.toThrow();
+      expect(readdirSync(tmpdir()).filter((e) => e.startsWith("huk-mod-"))).toHaveLength(0);
+
+      // Start-up sweep removes a planted stale dir.
+      const stale = mkdtempSync(join(tmpdir(), "huk-mod-"));
+      const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      utimesSync(stale, old, old);
+      const freshDir = mkdtempSync(join(tmpdir(), "huk-mod-"));
+      expect(sweepStaleTempFiles()).toBeGreaterThanOrEqual(1);
+      expect(existsSync(stale)).toBe(false);
+      expect(existsSync(freshDir)).toBe(true);
+      rmSync(freshDir, { recursive: true, force: true });
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("audius provider (H-202, D3: ships disabled)", () => {
+  beforeEach(() => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    process.env.DATABASE_URL ??= "postgresql://huk:huk@localhost:5432/huk";
+  });
+
+  it("rejects an Audius submission with a clear error while AUDIUS_ENABLED=false (default)", async () => {
+    await expect(resolveAudiusTrack("abc123", { enabled: false })).rejects.toMatchObject({
+      code: "PROVIDER_DISABLED",
+    });
+    await expect(resolveAudiusTrack("abc123")).rejects.toThrow(/AUDIUS_ENABLED=false; owner decision D3 pending/);
+  });
+
+  it("resolves a track against a recorded fixture through the trusted host (seam loader)", async () => {
+    const fixture = JSON.stringify({
+      data: { id: "abc123", title: "Fixture Track", duration: 187, is_available: true },
+    });
+    const seenUrls: string[] = [];
+    const loader = async (req: { url: URL }) => {
+      seenUrls.push(req.url.href);
+      return {
+        status: 200,
+        headers: {},
+        body: new TextEncoder().encode(fixture),
+        bytes: fixture.length,
+        url: req.url.href,
+      };
+    };
+    const res = await resolveAudiusTrack("abc123", { enabled: true, loader });
+    expect(res.externalId).toBe("abc123");
+    expect(res.title).toBe("Fixture Track");
+    expect(res.durationSec).toBe(187);
+    expect(res.streamUrl).toBe("https://api.audius.co/v1/tracks/abc123/stream?app_name=huk");
+    expect(seenUrls[0]).toContain("https://api.audius.co/v1/tracks/abc123?app_name=huk");
+  });
+
+  it("a deleted or unavailable fixture answers SOURCE_NOT_FOUND", async () => {
+    const fixture = JSON.stringify({ data: { id: "gone1", is_delete: true } });
+    const loader = async (req: { url: URL }) => ({
+      status: 200,
+      headers: {},
+      body: new TextEncoder().encode(fixture),
+      bytes: fixture.length,
+      url: req.url.href,
+    });
+    await expect(resolveAudiusTrack("gone1", { enabled: true, loader })).rejects.toMatchObject({
+      code: "SOURCE_NOT_FOUND",
+    });
+  });
+
+  it("an invalid audius id is a validation error, not a fetch", async () => {
+    await expect(
+      resolveAudiusTrack("../etc/passwd", { enabled: true, loader: async () => {
+        throw new Error("must not fetch");
+      } }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });
 });

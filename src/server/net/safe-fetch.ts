@@ -80,7 +80,11 @@ export type SafeFetchOptions = {
   sameHostOnly?: boolean; // a redirect may not leave the current host
   resolver?: SafeResolver;
   loader?: SafeLoader;
+  /** Extra request headers; credential/framing headers are never forwarded. */
+  headers?: Record<string, string>;
 };
+
+const FORBIDDEN_EXTRA_HEADERS = /^(cookie|authorization|host|connection|content-length|transfer-encoding|if-none-match|if-modified-since)$/i;
 
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
@@ -638,6 +642,9 @@ export async function safeFetch(
         accept: "*/*",
         "user-agent": "HUK-safe-fetch/1",
         "accept-encoding": "gzip, deflate, br",
+        ...Object.fromEntries(
+          Object.entries(opts.headers ?? {}).filter(([k]) => !FORBIDDEN_EXTRA_HEADERS.test(k)),
+        ),
       },
       maxBytes,
       connectTimeoutMs,
