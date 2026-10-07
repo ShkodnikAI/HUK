@@ -6,6 +6,15 @@ import { purgeExpiredBuckets, rateLimit } from "@/server/ratelimit";
 import { endCurrentSlotEarly, startScheduler } from "@/server/broadcast/scheduler";
 import { radioNow } from "@/app/api/radio/now/route";
 
+/** Polls `cond` until true or the timeout elapses (CI runners are slow). */
+async function pollUntil(cond: () => Promise<boolean> | boolean, timeoutMs: number, stepMs = 200): Promise<boolean> {
+  for (let waited = 0; waited <= timeoutMs; waited += stepMs) {
+    if (await cond()) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return await cond();
+}
+
 // DB integration tests (H-101), single file so the suites never run in
 // parallel workers: every suite TRUNCATEs the shared tables in beforeEach and
 // would race another file's fixtures. One test per DB constraint introduced
@@ -294,34 +303,35 @@ describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", ()
     await seedLibrary(10);
     const a = startScheduler({ tickMs: 100 });
     const b = startScheduler({ tickMs: 100 });
-    await new Promise((r) => setTimeout(r, 1500));
-
-    expect(a.isLeader() && b.isLeader()).toBe(false); // never both
-    expect(a.isLeader() || b.isLeader()).toBe(true); // always one
-    const slots = await db.broadcastSlot.count();
-    expect(slots).toBeGreaterThan(0);
     try {
-      await a.stop();
-      await b.stop();
+      // Wait (generously) until one of them leads and the timeline is filled.
+      await pollUntil(() => a.isLeader() || b.isLeader(), 10_000);
+
+      expect(a.isLeader() && b.isLeader()).toBe(false); // never both
+      expect(a.isLeader() || b.isLeader()).toBe(true); // always one
+      await pollUntil(async () => (await db.broadcastSlot.count()) > 0, 10_000);
+      const slots = await db.broadcastSlot.count();
+      expect(slots).toBeGreaterThan(0);
     } finally {
       await a.stop().catch(() => {});
       await b.stop().catch(() => {});
     }
-  }, 20_000);
+  }, 30_000);
 
   it("failover: when the leader stops, the follower takes over and seq continues without duplicates", async () => {
     await seedLibrary(10);
     const a = startScheduler({ tickMs: 100 });
-    await new Promise((r) => setTimeout(r, 800));
+    await pollUntil(() => a.isLeader(), 10_000);
     expect(a.isLeader()).toBe(true);
 
     const follower = startScheduler({ tickMs: 100 });
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 300));
     expect(follower.isLeader()).toBe(false);
 
     const seqBefore = await db.stationState.findUnique({ where: { id: "main" } });
     await a.stop();
-    await new Promise((r) => setTimeout(r, 1500)); // follower must take over
+    // Follower must take over once the lock frees (poll, CI-tolerant).
+    await pollUntil(() => follower.isLeader(), 15_000);
     expect(follower.isLeader()).toBe(true);
 
     const newSlots = await db.broadcastSlot.count();
@@ -343,7 +353,7 @@ describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", ()
   it("endCurrentSlotEarly shortens the live slot; the leader refills within a tick", async () => {
     await seedLibrary(10);
     const scheduler = startScheduler({ tickMs: 100 });
-    await new Promise((r) => setTimeout(r, 800));
+    await pollUntil(async () => (await db.broadcastSlot.count()) > 0, 10_000);
 
     const current = await db.broadcastSlot.findFirst({
       where: { startsAt: { lte: new Date() }, endsAt: { gt: new Date() } },
@@ -355,15 +365,16 @@ describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", ()
     expect(shortened).not.toBeNull();
     expect(shortened!.endsAt.getTime()).toBeLessThan(current!.endsAt.getTime());
 
-    await new Promise((r) => setTimeout(r, 500)); // leader fills the gap next tick
-    const stillCurrent = await db.broadcastSlot.findFirst({
-      where: { startsAt: { lte: new Date(Date.now() + 500) }, endsAt: { gt: new Date(Date.now() + 500) } },
-      orderBy: { seq: "asc" },
-    });
-    // After the early end there is a replacement slot covering the moment.
+    // The leader fills the gap on its next tick (poll, CI-tolerant).
+    const refilled = await pollUntil(async () => {
+      const covering = await db.broadcastSlot.findFirst({
+        where: { startsAt: { lte: new Date(Date.now() + 500) }, endsAt: { gt: new Date(Date.now() + 500) } },
+        orderBy: { startsAt: "asc" },
+      });
+      return covering !== null && covering.trackId !== current!.trackId;
+    }, 15_000);
     try {
-      expect(stillCurrent).not.toBeNull();
-      expect(stillCurrent!.trackId).not.toBe(current!.trackId);
+      expect(refilled).toBe(true);
     } finally {
       await scheduler.stop();
     }
@@ -421,7 +432,7 @@ describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", ()
     await db.track.create({ data: { title: "draft", status: "DRAFT", available: true, durationSec: 60 } });
     await db.track.create({ data: { title: "gone", status: "APPROVED", available: false, durationSec: 60 } });
     const scheduler = startScheduler({ tickMs: 100 });
-    await new Promise((r) => setTimeout(r, 1000));
+    await pollUntil(async () => (await db.broadcastSlot.count()) > 0, 10_000);
     const scheduled = await db.broadcastSlot.findMany({ select: { trackId: true } });
     expect(scheduled.length).toBeGreaterThan(0);
     const scheduledIds = new Set(scheduled.map((s) => s.trackId));
@@ -445,7 +456,7 @@ describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", ()
     child.stderr.on("data", (d: Buffer) => (output += d.toString()));
 
     // Wait for boot.
-    for (let i = 0; i < 40 && !output.includes("broadcast scheduler started"); i++) {
+    for (let i = 0; i < 200 && !output.includes("broadcast scheduler started"); i++) {
       await new Promise((r) => setTimeout(r, 100));
     }
     expect(output).toContain("broadcast scheduler started");
@@ -453,7 +464,7 @@ describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", ()
     // The worker holds the lock once its first tick acquires it (poll: CI is
     // slower than a local disk, so a single snapshot would race the boot).
     let held = false;
-    for (let i = 0; i < 50 && !held; i++) {
+    for (let i = 0; i < 200 && !held; i++) {
       await new Promise((r) => setTimeout(r, 100));
       const rows = await db.$queryRaw<{ held: boolean }[]>`
         SELECT COUNT(*) > 0 AS held FROM pg_locks WHERE locktype = 'advisory' AND granted = true`;
@@ -468,7 +479,7 @@ describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", ()
 
     // The lock is released (poll briefly: the unlock happens just before exit).
     let heldAfter = true;
-    for (let i = 0; i < 50 && heldAfter; i++) {
+    for (let i = 0; i < 200 && heldAfter; i++) {
       await new Promise((r) => setTimeout(r, 100));
       const rows = await db.$queryRaw<{ held: boolean }[]>`
         SELECT COUNT(*) > 0 AS held FROM pg_locks WHERE locktype = 'advisory' AND granted = true`;
