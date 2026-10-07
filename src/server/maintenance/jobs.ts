@@ -8,10 +8,12 @@ import type { PrismaClient } from "@prisma/client";
 import { loadEnv } from "@/server/env";
 import { db as defaultDb } from "@/server/db";
 import type { MaintenanceJob } from "./types";
+import { verifyTrackSource } from "@/server/sources/verify";
 
 const HOURLY_MS = 60 * 60 * 1000;
 const DAILY_MS = 24 * HOURLY_MS;
 const MONTHLY_MS = 30 * DAILY_MS;
+const TEN_MINUTES_MS = 10 * 60 * 1000;
 /** ARCHITECTURE §4: AuditLog is kept for 24 months. */
 const AUDIT_RETENTION_MONTHS = 24;
 
@@ -119,6 +121,29 @@ export function makeMaintenanceJobs(
         const cutoff = new Date(Date.now() - AUDIT_RETENTION_MONTHS * 30 * 24 * 60 * 60 * 1000);
         const res = await client.auditLog.deleteMany({ where: { createdAt: { lt: cutoff } } });
         return `${res.count} audit entries older than ${AUDIT_RETENTION_MONTHS} months removed`;
+      },
+    },
+    {
+      name: "verify-track-sources",
+      everyMs: TEN_MINUTES_MS,
+      run: async () => {
+        const env = loadEnv();
+        // Oldest verifiedAt first; never-verified sources (NULL) go first.
+        const ids = await client.$queryRaw<Array<{ trackId: string }>>`
+          SELECT "trackId" FROM "TrackSource"
+          WHERE "provider" != 'SEED' OR "verifiedAt" IS NULL
+          ORDER BY "verifiedAt" ASC NULLS FIRST
+          LIMIT ${env.SOURCE_VERIFY_BATCH}
+        `;
+        let fresh = 0, mismatched = 0, unavailable = 0, skipped = 0;
+        for (const { trackId } of ids) {
+          const outcome = await verifyTrackSource(trackId, { client, env });
+          if (outcome.outcome === "fresh") fresh++;
+          else if (outcome.outcome === "mismatch") mismatched++;
+          else if (outcome.outcome === "unavailable") unavailable++;
+          else skipped++;
+        }
+        return `${ids.length} sources checked: ${fresh} fresh, ${mismatched} mismatched, ${unavailable} unavailable, ${skipped} skipped`;
       },
     },
   ];

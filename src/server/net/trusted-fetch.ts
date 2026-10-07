@@ -4,7 +4,7 @@
 // leave the trusted host. Everything underneath is safeFetch's validated,
 // pinned transport.
 
-import { safeFetch, SafeFetchError, type SafeFetchResult } from "./safe-fetch";
+import { safeFetch, SafeFetchError, type SafeFetchResult, type SafeLoader } from "./safe-fetch";
 
 /**
  * The fixed provider host allowlist (AGENTS §5 S4: Audius, ASR, LLM; plus
@@ -27,6 +27,8 @@ export type TrustedFetchOptions = {
   retries?: number;
   /** Backoff base in ms (default 250, exponential x2). */
   backoffMs?: number;
+  /** H-201 test seam (recorded fixtures); production uses the pinned transport. */
+  loader?: SafeLoader;
 };
 
 const RETRYABLE_CODES = new Set(["CONNECT_TIMEOUT", "TIMEOUT", "DNS_FAILED", "BAD_RESPONSE"]);
@@ -72,6 +74,7 @@ export async function trustedFetch(
         totalTimeoutMs: opts.totalTimeoutMs,
         maxHops: 3,
         sameHostOnly: true, // a provider redirect may not leave the allowlist
+        loader: opts.loader,
       });
       if (RETRYABLE_STATUSES.has(res.status) && attempt < retries) {
         lastError = new SafeFetchError("BAD_RESPONSE", `provider answered ${res.status}`);

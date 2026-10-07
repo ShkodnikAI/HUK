@@ -70,6 +70,16 @@ const schema = z.object({
         .filter((p) => Number.isInteger(p) && p > 0 && p < 65536),
     )
     .refine((ports) => ports.length > 0, "SAFE_FETCH_PORTS needs at least one valid port"),
+  // S4/H-202: the Audius provider ships DISABLED (owner decision D3); no
+  // default configuration may flip it on.
+  AUDIUS_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  // S4/H-202: source verification schedule and failure tolerance.
+  SOURCE_FULL_HASH_DAYS: z.coerce.number().int().positive().default(7),
+  SOURCE_MAX_FAILS: z.coerce.number().int().positive().default(5),
+  SOURCE_VERIFY_BATCH: z.coerce.number().int().positive().default(20),
 });
 
 export type Env = z.infer<typeof schema>;

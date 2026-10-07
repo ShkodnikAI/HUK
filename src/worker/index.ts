@@ -6,10 +6,15 @@ import { loadEnv } from "@/server/env";
 import { startScheduler } from "@/server/broadcast/scheduler";
 import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
 import { startMaintenance } from "@/server/maintenance/runner";
+import { sweepStaleTempFiles } from "@/server/sources/verify";
 
 const env = loadEnv();
 
 console.log(`[worker] booted pid=${process.pid} inviteOnly=${env.INVITE_ONLY}`);
+
+// S3 (H-202): remove moderation temp dirs a crashed previous run left behind.
+const swept = sweepStaleTempFiles();
+if (swept > 0) console.log(`[worker] swept ${swept} stale moderation temp dirs`);
 
 let stopping = false;
 
