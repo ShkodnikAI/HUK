@@ -20,7 +20,7 @@ services:
     environment:
       DATABASE_URL: postgresql://huk:huk@postgres:5432/huk
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env (openssl rand -base64 32)}
-      AUTH_URL: http://localhost:3000
+      NEXTAUTH_URL: http://localhost:3000
     ports:
       - "3000:3000"
     depends_on:

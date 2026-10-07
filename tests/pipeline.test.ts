@@ -1,11 +1,12 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { z } from "zod";
 import { HttpError, errorBody } from "@/server/http/errors";
-import { parseJson, parseQuery } from "@/server/http/parse";
+import { parseJson, parseQuery, DEFAULT_MAX_JSON_BYTES } from "@/server/http/parse";
 import { route } from "@/server/http/handler";
 import { clientIp, hashIp } from "@/server/iphash";
 import { sanitizePayload } from "@/server/audit";
 import { loadEnv } from "@/server/env";
+import { rateLimit, RateLimitInvariantError } from "@/server/ratelimit";
 
 // H-103 contract tests: typed error mapping (400/413/422/429/500, no stack in
 // bodies), input parsing limits, IP hashing rotation, audit sanitiser and the
@@ -176,6 +177,7 @@ describe("production env requirements (H-103)", () => {
     const env = loadEnv({
       ...base,
       NODE_ENV: "production",
+      NEXTAUTH_URL: "https://radio.example",
       IP_HASH_SALT: "test-only fixture value, not a credential",
       CLIENT_IP_HEADER: "cf-connecting-ip",
       EMAIL_SERVER: "smtp://user:pass@localhost:1025",
@@ -188,6 +190,7 @@ describe("production env requirements (H-103)", () => {
       loadEnv({
         ...base,
         NODE_ENV: "production",
+        NEXTAUTH_URL: "https://radio.example",
         IP_HASH_SALT: "test-only fixture value, not a credential",
         CLIENT_IP_HEADER: "cf-connecting-ip",
       }),
@@ -196,5 +199,90 @@ describe("production env requirements (H-103)", () => {
 
   it("does not require them in development", () => {
     expect(() => loadEnv(base)).not.toThrow();
+  });
+});
+
+describe("parseJson bounded body (H-110 F4)", () => {
+  const schema = z.object({ name: z.string().min(1) });
+
+  /** A pull-based stream that counts how often it was pulled (one 4 KB chunk per pull). */
+  function countingChunkedStream(chunks: number) {
+    const chunk = Buffer.alloc(4096, 0x61); // "a" bytes
+    let pulls = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++;
+        controller.enqueue(chunk);
+      },
+    });
+    return { stream, reads: () => pulls, totalBytes: chunks * chunk.byteLength };
+  }
+
+  function streamRequest(body: ReadableStream<Uint8Array>, headers?: Record<string, string>): Request {
+    return new Request("http://x/api", {
+      method: "POST",
+      body,
+      duplex: "half",
+      headers,
+    } as RequestInit);
+  }
+
+  it("rejects by Content-Length before reading anything", async () => {
+    const req = new Request("http://x/api", {
+      method: "POST",
+      body: JSON.stringify({ name: "a" }),
+      headers: { "content-length": String(DEFAULT_MAX_JSON_BYTES + 1) },
+    });
+    const e = await httpErrorOf(parseJson(req, schema));
+    expect(e.status).toBe(413);
+    expect(e.code).toBe("PAYLOAD_TOO_LARGE");
+  });
+
+  it("cancels an oversized chunked body mid-stream (reading stops early)", async () => {
+    // 100 chunks of 4 KB = 400 KB, way over the 32 KB limit; a correct
+    // implementation must stop pulling after roughly limit/chunkSize reads.
+    const { stream, reads, totalBytes } = countingChunkedStream(100);
+    expect(totalBytes).toBeGreaterThan(DEFAULT_MAX_JSON_BYTES);
+    const req = streamRequest(stream);
+    const e = await httpErrorOf(parseJson(req, schema));
+    expect(e.status).toBe(413);
+    expect(e.code).toBe("PAYLOAD_TOO_LARGE");
+    // Proof of early stop: ~9 pulls (32 KB / 4 KB + 1) instead of 100.
+    expect(reads()).toBeLessThanOrEqual(DEFAULT_MAX_JSON_BYTES / 4096 + 2);
+    expect(reads()).toBeLessThan(100);
+  });
+
+  it("reads a chunked body under the limit without loss", async () => {
+    const part = JSON.stringify({ name: "x".repeat(10_000) });
+    const bytes = Buffer.from(part, "utf8");
+    let offset = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset >= bytes.byteLength) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(bytes.subarray(offset, offset + 4096));
+        offset += 4096;
+      },
+    });
+    const req = streamRequest(stream);
+    await expect(parseJson(req, schema)).resolves.toMatchObject({ name: "x".repeat(10_000) });
+  });
+
+  it("400 INVALID_JSON when there is no body at all", async () => {
+    const req = post("http://x/api");
+    const e = await httpErrorOf(parseJson(req, schema));
+    expect(e.status).toBe(400);
+    expect(e.code).toBe("INVALID_JSON");
+  });
+});
+
+describe("rateLimit fail closed (H-110 F8)", () => {
+  it("throws when the upsert returns no row (injected client)", async () => {
+    const emptyClient = { $queryRaw: async () => [] as { count: number }[] };
+    await expect(
+      rateLimit({ key: "unit:no-row", limit: 1, windowSec: 60, client: emptyClient as never }),
+    ).rejects.toBeInstanceOf(RateLimitInvariantError);
   });
 });

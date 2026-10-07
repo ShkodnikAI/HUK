@@ -45,7 +45,7 @@ describe("S8 lint guard (H-109): legitimate code passes", () => {
   it("accepts loadEnv() usage in src/", async () => {
     const errors = await restrictedSyntaxErrors(
       TARGET,
-      'import { loadEnv } from "@/server/env";\nconst env = loadEnv();\nexport const x = env.AUTH_URL;',
+      'import { loadEnv } from "@/server/env";\nconst env = loadEnv();\nexport const x = env.NEXTAUTH_URL;',
     );
     expect(errors).toHaveLength(0);
   });

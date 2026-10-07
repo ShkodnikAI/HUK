@@ -54,6 +54,14 @@ duration with ffprobe (part of ffmpeg), computes sha256/size, and upserts the
 tracks (status `APPROVED`, provider `SEED`). Requires ffmpeg ≥ 4. Python 3.11+
 with `numpy`/`scipy`.
 
+## Configuration
+
+Environment is validated at boot (`src/server/env.ts`, S8); see `.env.example`.
+Magic links are built on `NEXTAUTH_URL` only (H-110): next-auth v4 ignores
+`AUTH_URL`, and `AUTH_TRUST_HOST` must stay unset — deriving the origin from
+forwarded headers would allow link poisoning. In production `NEXTAUTH_URL`
+must be an `https://` URL or the server refuses to start.
+
 ## Contributing
 Work happens through naryads: open an issue from the *Naryad* template that references a card in
 `docs/PLAN.md`, branch, open a PR, pass CI. See `AGENTS.md`.

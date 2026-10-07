@@ -13,6 +13,7 @@ import { makeAuthOptions } from "@/server/auth/options";
 import { withSignInRateLimit } from "@/server/auth/signin-limit";
 import { loadEnv } from "@/server/env";
 import { SESSION_COOKIE, requireRole, requireSession, requireUser } from "@/server/guard";
+import { route } from "@/server/http/handler";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
@@ -446,6 +447,49 @@ describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", ()
     expect(result.next).toEqual([]);
   });
 
+  it("/now omits slots of non-approved or unavailable tracks (H-110 F3, S2), at most 2 queries", async () => {
+    const nowMs = Date.now();
+    const mk = async (title: string, status: string, available: boolean) => {
+      const track = await db.track.create({ data: { title, status: status as never, available, durationSec: 60 } });
+      await db.trackSource.create({
+        data: { trackId: track.id, provider: "SEED", url: `https://example.com/${title}.mp3` },
+      });
+      return track.id;
+    };
+    const good = await mk("good", "APPROVED", true);
+    const pending = await mk("pending-track", "PENDING", true);
+    const gone = await mk("gone", "APPROVED", false);
+
+    await db.broadcastSlot.createMany({
+      data: [
+        { seq: 1n, trackId: pending, startsAt: new Date(nowMs - 10_000), endsAt: new Date(nowMs + 10_000) },
+        { seq: 2n, trackId: gone, startsAt: new Date(nowMs + 10_000), endsAt: new Date(nowMs + 30_000) },
+        { seq: 3n, trackId: good, startsAt: new Date(nowMs + 30_000), endsAt: new Date(nowMs + 50_000) },
+      ],
+    });
+
+    let queries = 0;
+    const countingClient = {
+      $queryRaw: (...args: unknown[]) => {
+        queries++;
+        return (db.$queryRaw as (...a: unknown[]) => unknown)(...args);
+      },
+    };
+    const result = await radioNow(nowMs, countingClient as never);
+
+    // Only the APPROVED + available track is served (current and next).
+    const servedIds = [
+      ...(result.current ? [result.current.track.id] : []),
+      ...result.next.map((s) => s.track.id),
+    ];
+    expect(servedIds).toEqual([good]);
+    expect(servedIds).not.toContain(pending);
+    expect(servedIds).not.toContain(gone);
+
+    // The read stays a pure read: at most 2 queries (F3 done criteria).
+    expect(queries).toBeLessThanOrEqual(2);
+  });
+
   it("never schedules non-APPROVED or unavailable tracks (S2)", async () => {
     await seedLibrary(5);
     await db.track.create({ data: { title: "draft", status: "DRAFT", available: true, durationSec: 60 } });
@@ -694,6 +738,191 @@ describe.skipIf(!databaseUrl)("auth guard, matrix and magic-link flows (H-102)",
     });
     const otherRes = await withSignInRateLimit(other, env, () => Promise.resolve(Response.json({ ok: true })));
     expect(otherRes.status).toBe(200);
+  });
+
+  it("magic link is built on NEXTAUTH_URL through the real Auth.js handler (H-110 F1)", async () => {
+    const prevUrl = process.env.NEXTAUTH_URL;
+    process.env.NEXTAUTH_URL = "https://example.test";
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+    try {
+      // The real NextAuth handler (pages-router entry of the very same
+      // NextAuth(options) the App Router route wraps; the route glue itself
+      // needs a live Next request scope, so the test drives req/res directly).
+      const NextAuth = (await import("next-auth")).default;
+      const handler = NextAuth(makeAuthOptions(loadEnv())) as unknown as (
+        req: unknown,
+        res: unknown,
+      ) => Promise<void>;
+
+      const makeRes = () => {
+        const record: {
+          headers: Record<string, unknown>;
+          send?: unknown;
+          json?: unknown;
+        } = { headers: {} };
+        const res = {
+          status() {
+            return res;
+          },
+          setHeader(k: string, v: unknown) {
+            record.headers[k] = v;
+            return res;
+          },
+          getHeader(k: string) {
+            return record.headers[k];
+          },
+          end() {},
+          json(b: unknown) {
+            record.json = b;
+            return res;
+          },
+          send(b: unknown) {
+            record.send = b;
+            return res;
+          },
+        };
+        return { res, record };
+      };
+
+      // Step 1: the real CSRF handshake (GET /api/auth/csrf issues the token
+      // and the __Secure-next-auth.csrf-token cookie, because NEXTAUTH_URL
+      // is https://example.test here).
+      const step1 = makeRes();
+      await handler(
+        { method: "GET", url: "/api/auth/csrf", headers: {}, cookies: {}, query: { nextauth: ["csrf"] } },
+        step1.res,
+      );
+      const csrfBody = (step1.record.json ?? step1.record.send) as { csrfToken: string };
+      expect(csrfBody.csrfToken).toBeTruthy();
+      const setCookies = step1.record.headers["Set-Cookie"] as string[];
+      const csrfCookieLine = setCookies.find((c) => c.includes("csrf-token"));
+      expect(csrfCookieLine).toBeTruthy();
+      const pair = csrfCookieLine!.split(";")[0];
+      const eq = pair.indexOf("=");
+      const csrfCookieName = pair.slice(0, eq);
+      const csrfCookieValue = decodeURIComponent(pair.slice(eq + 1));
+
+      // Step 2: the real sign-in POST (dev path prints the magic link).
+      const step2 = makeRes();
+      await handler(
+        {
+          method: "POST",
+          url: "/api/auth/signin/email",
+          headers: {},
+          cookies: { [csrfCookieName]: csrfCookieValue },
+          query: { nextauth: ["signin", "email"] },
+          body: { email: "magic-link@test.example", csrfToken: csrfBody.csrfToken },
+        },
+        step2.res,
+      );
+
+      // With only AUTH_URL-style env next-auth v4 would fall back to
+      // http://localhost:3000; the link must instead carry the NEXTAUTH_URL host.
+      const link = logs.find((l) => l.includes("callback/email"));
+      expect(link, "dev path must print the magic link").toBeTruthy();
+      expect(link!).toContain("https://example.test/api/auth/callback/email?");
+      expect(link!).not.toContain("http://localhost:3000");
+    } finally {
+      logSpy.mockRestore();
+      if (prevUrl === undefined) delete process.env.NEXTAUTH_URL;
+      else process.env.NEXTAUTH_URL = prevUrl;
+    }
+  });
+
+  it("limiter parity: normalization variants share one per-email bucket (H-110 F2)", async () => {
+    const env = loadEnv();
+    const variants = [
+      "parity@test.example", // canonical
+      "Parity@Test.Example", // case folding
+      "parity@test.example,x", // domain cut at the first comma
+      "  parity@test.example  ", // trim
+      "\uFF30\uFF41\uFF52\uFF49\uFF54\uFF59@test.example", // NFKC fold
+    ];
+    let last: Response | null = null;
+    for (let i = 0; i < variants.length + 1; i++) {
+      const email = i < variants.length ? variants[i] : "parity@test.example";
+      const form = new FormData();
+      form.set("email", email);
+      form.set("csrfToken", "ignored-here");
+      const req = new NextRequest("http://localhost:3000/api/auth/signin/email", {
+        method: "POST",
+        body: form,
+      });
+      last = await withSignInRateLimit(req, env, () => Promise.resolve(Response.json({ ok: true })));
+      if (i < variants.length) expect(last.status, `variant ${i}`).toBe(200);
+    }
+    // 5 distinct spellings = 5 consumed units; the canonical 6th is limited.
+    expect(last!.status).toBe(429);
+  });
+
+  it("route rateLimit accepts per-request key functions (H-110 F6)", async () => {
+    const handler = route(async () => Response.json({ ok: true }), {
+      rateLimit: {
+        key: (req) => `test-client:${req.headers.get("x-client") ?? "anon"}`,
+        limit: 1,
+        windowSec: 60,
+      },
+    });
+    const call = (client: string) =>
+      handler(new Request("http://localhost:3000/api/x", { headers: { "x-client": client } }), undefined);
+    expect((await call("a")).status).toBe(200);
+    expect((await call("a")).status).toBe(429); // same key: limited
+    expect((await call("b")).status).toBe(200); // other key: own bucket
+    // The old static-key form still works.
+    const staticHandler = route(async () => Response.json({ ok: true }), {
+      rateLimit: { key: "static-key-form", limit: 1, windowSec: 60 },
+    });
+    expect((await staticHandler(new Request("http://localhost:3000/api/x"), undefined)).status).toBe(200);
+    expect((await staticHandler(new Request("http://localhost:3000/api/x"), undefined)).status).toBe(429);
+  });
+
+  it("guard: same-origin enforcement on mutations (H-110 F12)", async () => {
+    process.env.NEXTAUTH_URL = "http://localhost:3000";
+    const { user } = await createUserWithSession("LISTENER");
+    const token = `tok-${user.id}`;
+    const post = (origin?: string) =>
+      new Request("http://localhost:3000/api/protected", {
+        method: "POST",
+        headers: {
+          cookie: `${SESSION_COOKIE}=${token}`,
+          ...(origin ? { origin } : {}),
+        },
+      });
+
+    // Same origin (Origin header): passes.
+    await expect(requireUser(post("http://localhost:3000"))).resolves.toBeTruthy();
+    // Same host via Referer fallback: passes.
+    const refererReq = new Request("http://localhost:3000/api/protected", {
+      method: "POST",
+      headers: { cookie: `${SESSION_COOKIE}=${token}`, referer: "http://localhost:3000/en" },
+    });
+    await expect(requireUser(refererReq)).resolves.toBeTruthy();
+
+    // Foreign origin: 403 BAD_ORIGIN.
+    await expect(requireUser(post("https://evil.example"))).rejects.toMatchObject({
+      status: 403,
+      code: "BAD_ORIGIN",
+    });
+    // Missing origin on a mutation: 403 BAD_ORIGIN.
+    await expect(requireUser(post())).rejects.toMatchObject({ status: 403, code: "BAD_ORIGIN" });
+
+    // GET requests are unaffected (no Origin needed).
+    const getReq = new Request("http://localhost:3000/api/protected", {
+      headers: { cookie: `${SESSION_COOKIE}=${token}` },
+    });
+    await expect(requireUser(getReq)).resolves.toBeTruthy();
+  });
+
+  it("guard: a role typo fails to compile and is denied at runtime (H-110 F7)", async () => {
+    const listener = await createUserWithSession("LISTENER");
+    await expect(
+      // @ts-expect-error H-110 F7: requireRole takes the Prisma Role enum —
+      // a typo like ADIMN must break the build, not silently deny at runtime.
+      requireRole(requestWithCookie(`tok-${listener.user.id}`), "ADIMN"),
+    ).rejects.toMatchObject({ status: 403 });
   });
 
   it("auth cookies: httpOnly + sameSite=lax, secure only in production; adapter tokens are single-use", async () => {

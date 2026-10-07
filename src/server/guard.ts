@@ -1,9 +1,10 @@
-// Central authorization guard (H-102, S1). Route handlers call
+// Central authorization guard (H-102, H-110; S1). Route handlers call
 // requireSession/requireUser/requireRole; fail closed on any error.
 // Identity comes only from the server-side session (database strategy).
 
-import type { Session, User } from "@prisma/client";
+import type { Role, Session, User } from "@prisma/client";
 import { HttpError } from "@/server/http/errors";
+import { loadEnv } from "@/server/env";
 import { db } from "@/server/db";
 
 export const SESSION_COOKIE = "next-auth.session-token";
@@ -21,17 +22,28 @@ function readSessionToken(req: Request): string | null {
   return null;
 }
 
-/** Resolves the user of the request's session, or null (database sessions). */
-export async function resolveUser(req: Request): Promise<User | null> {
-  const token = readSessionToken(req);
-  if (!token) return null;
-  const session = await db.session.findUnique({
-    where: { sessionToken: token },
-    include: { user: true },
-  });
-  if (!session) return null;
-  if (session.expires.getTime() <= Date.now()) return null;
-  return session.user;
+/**
+ * F12 (H-110): mutating requests (everything except GET/HEAD) must carry an
+ * `Origin` or `Referer` header whose host matches the host of NEXTAUTH_URL.
+ * Session cookies are SameSite=Lax, this is the second door (CSRF defense in
+ * depth); mismatch or absence is a 403 BAD_ORIGIN — fail closed (S9).
+ */
+function assertSameOrigin(req: Request): void {
+  if (req.method === "GET" || req.method === "HEAD") return;
+  const expected = new URL(loadEnv().NEXTAUTH_URL).host;
+  const raw = req.headers.get("origin") ?? req.headers.get("referer");
+  if (!raw) {
+    throw new HttpError(403, "BAD_ORIGIN", "Missing Origin header");
+  }
+  let host: string | null = null;
+  try {
+    host = new URL(raw).host;
+  } catch {
+    host = null; // unparseable Origin/Referer is a mismatch
+  }
+  if (host !== expected) {
+    throw new HttpError(403, "BAD_ORIGIN", "Cross-origin request rejected");
+  }
 }
 
 /**
@@ -42,6 +54,7 @@ export async function requireSession(
   req: Request,
 ): Promise<{ session: Session; user: User }> {
   try {
+    assertSameOrigin(req);
     const token = readSessionToken(req);
     if (!token) throw new HttpError(401, "UNAUTHENTICATED", "Sign in required");
     const session = await db.session.findUnique({
@@ -74,10 +87,12 @@ export async function requireUser(req: Request): Promise<{ user: User }> {
 /**
  * 403 unless the user holds one of the roles. ADMIN satisfies MODERATOR
  * (the platform treats ADMIN as a superset of moderation powers).
+ * H-110 (F7): roles are the Prisma `Role` enum — a typo fails to compile
+ * instead of silently denying.
  */
 export async function requireRole(
   req: Request,
-  ...roles: string[]
+  ...roles: Role[]
 ): Promise<{ user: User }> {
   const { user } = await requireUser(req);
   const allowed =
