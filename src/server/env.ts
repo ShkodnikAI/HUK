@@ -53,6 +53,23 @@ const schema = z.object({
     .default(true),
   RETENTION_LISTEN_EVENTS_DAYS: z.coerce.number().int().positive().default(90),
   RETENTION_TRANSCRIPTS_DAYS: z.coerce.number().int().positive().default(90),
+  // S4 (H-201): the outbound doors. http is NEVER allowed in production
+  // code paths unless this dev/test flag is explicitly set.
+  SAFE_FETCH_ALLOW_HTTP: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  // S4 (H-201): the ports user-supplied URLs may target (comma-separated).
+  SAFE_FETCH_PORTS: z
+    .string()
+    .default("443")
+    .transform((s) =>
+      s
+        .split(",")
+        .map((p) => Number(p.trim()))
+        .filter((p) => Number.isInteger(p) && p > 0 && p < 65536),
+    )
+    .refine((ports) => ports.length > 0, "SAFE_FETCH_PORTS needs at least one valid port"),
 });
 
 export type Env = z.infer<typeof schema>;
