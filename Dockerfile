@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # HUK — multi-stage image. Two targets:
 #   web    (Next.js server, runs migrations then `next start`)
-#   worker (single-writer process: scheduler/queues arrive in H-004+)
+#   worker (single-writer process: scheduler/queues arrive in H-104+)
 # No secrets are baked in: everything arrives via environment at runtime (S8).
 
 FROM oven/bun:1 AS deps
