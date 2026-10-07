@@ -6,4 +6,4 @@
 # Uncomment when the route exists (stale entries are reported):
 # POST /api/radio/listen   # anonymous listen heartbeat; batched, rate limited by IP hash
 # POST /api/reports        # legal/contact form; rate limited, captcha-free, no auth by design
-# POST /api/auth/:path     # Auth.js endpoints
+POST /api/auth/:nextauth*  # Auth.js sign-in and callbacks are public by design; sign-in rate limited (H-102)

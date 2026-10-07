@@ -1,0 +1,41 @@
+{
+  "_comment": "Authorization matrix (H-102). Discovered routes must appear here; the test calls each handler per actor and compares statuses. 'skipCall: true' routes are public by design and exercised by dedicated flow tests instead (Auth.js internals need full sign-in machinery).",
+  "actors": ["anonymous", "LISTENER", "ARTIST", "MODERATOR", "ADMIN", "banned"],
+  "routes": {
+    "/api/health": {
+      "method": "GET",
+      "expected": {
+        "anonymous": 200,
+        "LISTENER": 200,
+        "ARTIST": 200,
+        "MODERATOR": 200,
+        "ADMIN": 200,
+        "banned": 200
+      }
+    },
+    "/api/radio/now": {
+      "method": "GET",
+      "expected": {
+        "anonymous": 200,
+        "LISTENER": 200,
+        "ARTIST": 200,
+        "MODERATOR": 200,
+        "ADMIN": 200,
+        "banned": 200
+      }
+    },
+    "/api/auth/:nextauth*": {
+      "method": "GET",
+      "skipCall": true,
+      "publicByDesign": "Auth.js sign-in and callbacks (H-102); flows covered by dedicated magic-link tests",
+      "expected": {
+        "anonymous": 200,
+        "LISTENER": 200,
+        "ARTIST": 200,
+        "MODERATOR": 200,
+        "ADMIN": 200,
+        "banned": 200
+      }
+    }
+  }
+}
