@@ -35,6 +35,7 @@ themselves — with AI-assisted moderation and transparent, deterministic charts
 Next.js 16 (App Router) · TypeScript (strict) · Tailwind 4 + shadcn/ui tokens · zod-validated env ·
 PostgreSQL 16 + Prisma 6 (migrations only, no `db push`) · Vitest · ESLint · bun · a single worker
 process (src/worker) · Docker Compose (`web`, `worker`, `postgres:16`) on one VPS behind Cloudflare.
+The `web` and `worker` containers run as the non-root user `bun` (uid 1000, H-108).
 `next-intl` and Auth.js arrive with H-105/H-102 respectively.
 
 ## Contributing
