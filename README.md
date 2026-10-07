@@ -73,10 +73,13 @@ docker compose up --build           # web :3000, worker, postgres, mailpit :8025
 worker, `postgres:16`, and a `mailpit` SMTP sink — magic links land in its UI at
 <http://localhost:8025>. The compose file injects development defaults for
 `IP_HASH_SALT`, `CLIENT_IP_HEADER`, `EMAIL_SERVER` and `NEXTAUTH_URL` (override them in
-`.env`); `AUTH_SECRET` stays mandatory. Production deployments must set real values in
-their own environment — the dev defaults must never reach production (S8 fails loud at
-boot otherwise). CI proves the stack on every PR and on `main` with the `docker-smoke`
-job (images build, both containers run as non-root, `/api/health` and `/api/radio/now`
+`.env`); `AUTH_SECRET` stays mandatory. The images run in production mode, so by H-110
+(S8) the compose `NEXTAUTH_URL` default is `https://localhost:3000`; for end-to-end
+magic-link testing on a laptop run bare `next dev` (development mode allows http) with
+`docker compose up -d mailpit`. Production deployments must set real values in their own
+environment — the dev defaults must never reach production (S8 fails loud at boot
+otherwise). CI proves the stack on every PR and on `main` with the `docker-smoke` job
+(images build, both containers run as non-root, `/api/health` and `/api/radio/now`
 answer 200, the worker stops cleanly on SIGTERM).
 
 ## Contributing

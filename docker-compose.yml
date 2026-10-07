@@ -29,7 +29,11 @@ services:
       DATABASE_URL: postgresql://huk:huk@postgres:5432/huk
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env (openssl rand -base64 32)}
       # H-110: next-auth v4 reads ONLY NEXTAUTH_URL; keep AUTH_TRUST_HOST unset.
-      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      # The images run NODE_ENV=production, so S8 (H-110) demands an https://
+      # base URL even for the local stack — hence the https localhost default.
+      # End-to-end magic-link testing locally: bare `next dev` (NODE_ENV=development,
+      # http is fine there) + `docker compose up -d mailpit`.
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-https://localhost:3000}
       # Development defaults for the settings production requires (H-103, S8).
       # They carry the repo-wide do-not-use-in-prod dev-salt naming and exist
       # ONLY so a local `docker compose up` boots. A production deployment must
@@ -55,7 +59,7 @@ services:
     environment:
       DATABASE_URL: postgresql://huk:huk@postgres:5432/huk
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env (openssl rand -base64 32)}
-      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-https://localhost:3000}
       IP_HASH_SALT: ${IP_HASH_SALT:-huk-dev-ip-hash-salt-do-not-use-in-prod}
       CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
       EMAIL_SERVER: ${EMAIL_SERVER:-smtp://mailpit:1025}
