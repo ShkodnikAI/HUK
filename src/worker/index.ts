@@ -1,6 +1,6 @@
 // Worker entry (ARCHITECTURE §2): a single instance owns all scheduled work.
 // H-003 scope: boot, validate env, stay alive, exit cleanly on SIGTERM.
-// The broadcast scheduler arrives with H-004 behind a pg advisory lock.
+// The broadcast scheduler arrives with H-104 behind a pg advisory lock.
 
 import { loadEnv } from "@/server/env";
 
@@ -20,7 +20,7 @@ function shutdown(signal: string): void {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-console.log("[worker] scheduler: not installed yet (H-004); idling");
+console.log("[worker] scheduler: not installed yet (H-104); idling");
 
 // Keep the event loop alive until a termination signal arrives.
 setInterval(() => {}, 1 << 30);
