@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 // S8 — the environment is validated once, at boot. Nothing anywhere else in the
-// codebase reads process.env directly (CI: scripts/ci/ + docs/AUDIT.md §3 grep 3).
+// codebase reads process.env directly (CI: scripts/ci/check-no-process-env.mjs,
+// wired into the `invariants` job; single documented exception H-107-EXCEPTION
+// in src/instrumentation.ts; see also docs/AUDIT.md §3 grep 3).
 // Mirrors .env.example; defaults match the example values.
 
 const schema = z.object({
