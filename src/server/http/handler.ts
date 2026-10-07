@@ -5,7 +5,12 @@ import { randomUUID } from "node:crypto";
 import { errorResponse } from "./errors";
 import { tooManyRequests } from "@/server/ratelimit";
 
-export type RateLimitOptions = { key: string; limit: number; windowSec: number };
+export type RateLimitOptions = {
+  // F6 (H-110): the key may be computed per request (per-client buckets).
+  key: string | ((req: Request) => string | Promise<string>);
+  limit: number;
+  windowSec: number;
+};
 
 export type RouteOptions = { rateLimit?: RateLimitOptions };
 
@@ -17,7 +22,13 @@ export function route<TCtx>(
     const requestId = randomUUID();
     try {
       if (opts?.rateLimit) {
-        const verdict = await (await import("@/server/ratelimit")).rateLimit(opts.rateLimit);
+        const { key, ...rest } = opts.rateLimit;
+        const resolvedKey =
+          typeof key === "function" ? await key(req) : key;
+        const verdict = await (await import("@/server/ratelimit")).rateLimit({
+          ...rest,
+          key: resolvedKey,
+        });
         if (!verdict.ok) {
           return tooManyRequests(verdict.retryAfterSec, requestId);
         }

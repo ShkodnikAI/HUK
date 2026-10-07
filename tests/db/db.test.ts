@@ -13,6 +13,7 @@ import { makeAuthOptions } from "@/server/auth/options";
 import { withSignInRateLimit } from "@/server/auth/signin-limit";
 import { loadEnv } from "@/server/env";
 import { SESSION_COOKIE, requireRole, requireSession, requireUser } from "@/server/guard";
+import { route } from "@/server/http/handler";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
@@ -812,6 +813,27 @@ describe.skipIf(!databaseUrl)("auth guard, matrix and magic-link flows (H-102)",
     }
     // 5 distinct spellings = 5 consumed units; the canonical 6th is limited.
     expect(last!.status).toBe(429);
+  });
+
+  it("route rateLimit accepts per-request key functions (H-110 F6)", async () => {
+    const handler = route(async () => Response.json({ ok: true }), {
+      rateLimit: {
+        key: (req) => `test-client:${req.headers.get("x-client") ?? "anon"}`,
+        limit: 1,
+        windowSec: 60,
+      },
+    });
+    const call = (client: string) =>
+      handler(new Request("http://localhost:3000/api/x", { headers: { "x-client": client } }), undefined);
+    expect((await call("a")).status).toBe(200);
+    expect((await call("a")).status).toBe(429); // same key: limited
+    expect((await call("b")).status).toBe(200); // other key: own bucket
+    // The old static-key form still works.
+    const staticHandler = route(async () => Response.json({ ok: true }), {
+      rateLimit: { key: "static-key-form", limit: 1, windowSec: 60 },
+    });
+    expect((await staticHandler(new Request("http://localhost:3000/api/x"), undefined)).status).toBe(200);
+    expect((await staticHandler(new Request("http://localhost:3000/api/x"), undefined)).status).toBe(429);
   });
 
   it("auth cookies: httpOnly + sameSite=lax, secure only in production; adapter tokens are single-use", async () => {

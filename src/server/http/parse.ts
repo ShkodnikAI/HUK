@@ -13,10 +13,33 @@ export async function parseJson<T>(
   opts?: { maxBytes?: number },
 ): Promise<T> {
   const maxBytes = opts?.maxBytes ?? DEFAULT_MAX_JSON_BYTES;
-  const raw = await req.text();
-  if (Buffer.byteLength(raw, "utf8") > maxBytes) {
+
+  // F4 (H-110): reject by Content-Length before touching the stream.
+  const contentLength = req.headers.get("content-length");
+  if (contentLength && Number(contentLength) > maxBytes) {
     throw new HttpError(413, "PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBytes} bytes`);
   }
+
+  // F4 (H-110): stream the body with a byte counter and cancel at the limit —
+  // an oversized chunked body must not be buffered whole.
+  if (!req.body) {
+    throw new HttpError(400, "INVALID_JSON", "Request body is not valid JSON");
+  }
+  const reader = req.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let raw = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    raw += decoder.decode(value, { stream: true });
+    if (total > maxBytes) {
+      await reader.cancel(); // stop pulling: never read the rest
+      throw new HttpError(413, "PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBytes} bytes`);
+    }
+  }
+  raw += decoder.decode();
 
   let data: unknown;
   try {

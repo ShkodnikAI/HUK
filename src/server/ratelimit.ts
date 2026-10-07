@@ -10,6 +10,18 @@ export type RateLimitVerdict = {
   retryAfterSec: number;
 };
 
+/** F8 (H-110): the atomic upsert must always return a row; if it does not,
+ *  the limiter is broken — refuse the request instead of allowing it (S9). */
+export class RateLimitInvariantError extends Error {
+  constructor() {
+    super("rateLimit: bucket upsert returned no row (fail closed, H-110 F8)");
+    this.name = "RateLimitInvariantError";
+  }
+}
+
+/** Injectable client keeps the limiter unit-testable (fail-closed case). */
+type QueryClient = Pick<typeof db, "$queryRaw">;
+
 function windowStartFor(windowSec: number, nowMs: number): { start: Date; end: number } {
   const nowSec = Math.floor(nowMs / 1000);
   const startSec = Math.floor(nowSec / windowSec) * windowSec;
@@ -21,11 +33,13 @@ export async function rateLimit(opts: {
   key: string;
   limit: number;
   windowSec: number;
+  client?: QueryClient;
 }): Promise<RateLimitVerdict> {
+  const client = opts.client ?? db;
   const nowMs = Date.now();
   const { start, end } = windowStartFor(opts.windowSec, nowMs);
 
-  const rows = await db.$queryRaw<{ count: number }[]>`
+  const rows = await client.$queryRaw<{ count: number }[]>`
     INSERT INTO "RateLimitBucket" ("key", "windowStart", "count")
     VALUES (${opts.key}, ${start}, 1)
     ON CONFLICT ("key", "windowStart")
@@ -33,10 +47,14 @@ export async function rateLimit(opts: {
     RETURNING "count"
   `;
 
-  const count = rows[0]?.count ?? 1;
+  // F8 (H-110): fail closed — a missing row means the write path is broken,
+  // silently treating it as count=1 would let every request through.
+  const row = rows[0];
+  if (!row) throw new RateLimitInvariantError();
+
   return {
-    ok: count <= opts.limit,
-    remaining: Math.max(0, opts.limit - count),
+    ok: row.count <= opts.limit,
+    remaining: Math.max(0, opts.limit - row.count),
     retryAfterSec: Math.max(1, Math.ceil((end - nowMs) / 1000)),
   };
 }
