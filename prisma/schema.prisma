@@ -125,6 +125,8 @@ model User {
   playlists     Playlist[]
   comments      Comment[]
   reports       Report[]   @relation("Reporter")
+  invitesCreated ArtistInvite[] @relation("CreatedInvites")
+  usedInvite     ArtistInvite?  @relation("UsedInvite")
 }
 
 model Account {
@@ -174,6 +176,24 @@ model ArtistProfile {
 
   user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   tracks Track[]
+}
+
+// Invite-only beta onboarding (H-209): only the SHA-256 of an invite code is
+// stored; the plain code is shown exactly once at creation and never again.
+model ArtistInvite {
+  id          String    @id @default(cuid())
+  codeHash    String    @unique // sha-256 hex of the plain code; never the code itself
+  createdById String
+  expiresAt   DateTime
+  usedById    String?   @unique // a user redeems at most one invite (they leave with a profile + ARTIST role)
+  usedAt      DateTime?
+  note        String?
+  createdAt   DateTime  @default(now())
+
+  createdBy User   @relation("CreatedInvites", fields: [createdById], references: [id], onDelete: Cascade)
+  usedBy    User?  @relation("UsedInvite", fields: [usedById], references: [id], onDelete: SetNull)
+
+  @@index([createdById])
 }
 
 // Which legal document version a user accepted, and when.
