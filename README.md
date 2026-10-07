@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/brand/huk-banner.jpg" alt="HUK wordmark: the letter H carries an audio waveform as its crossbar" width="720">
+</p>
+
 # HUK
 
 A free, non-commercial, international 24/7 internet radio for music that authors publish
@@ -21,6 +25,7 @@ themselves — with AI-assisted moderation and transparent, deterministic charts
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design |
 | [`docs/PLAN.md`](docs/PLAN.md) | Waves and naryads (work orders) |
 | [`docs/AUDIT.md`](docs/AUDIT.md) | How work is verified |
+| [`docs/BRAND.md`](docs/BRAND.md) | Logo, colours, typography, usage rules |
 | [`docs/OWNER_DECISIONS.md`](docs/OWNER_DECISIONS.md) | Open decisions that block work |
 | [`docs/LEGAL.md`](docs/LEGAL.md) | Legal assumptions and questions for counsel |
 | [`docs/adr/`](docs/adr/) | Architecture decision records |
