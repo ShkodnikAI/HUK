@@ -879,6 +879,52 @@ describe.skipIf(!databaseUrl)("auth guard, matrix and magic-link flows (H-102)",
     expect((await staticHandler(new Request("http://localhost:3000/api/x"), undefined)).status).toBe(429);
   });
 
+  it("guard: same-origin enforcement on mutations (H-110 F12)", async () => {
+    process.env.NEXTAUTH_URL = "http://localhost:3000";
+    const { user } = await createUserWithSession("LISTENER");
+    const token = `tok-${user.id}`;
+    const post = (origin?: string) =>
+      new Request("http://localhost:3000/api/protected", {
+        method: "POST",
+        headers: {
+          cookie: `${SESSION_COOKIE}=${token}`,
+          ...(origin ? { origin } : {}),
+        },
+      });
+
+    // Same origin (Origin header): passes.
+    await expect(requireUser(post("http://localhost:3000"))).resolves.toBeTruthy();
+    // Same host via Referer fallback: passes.
+    const refererReq = new Request("http://localhost:3000/api/protected", {
+      method: "POST",
+      headers: { cookie: `${SESSION_COOKIE}=${token}`, referer: "http://localhost:3000/en" },
+    });
+    await expect(requireUser(refererReq)).resolves.toBeTruthy();
+
+    // Foreign origin: 403 BAD_ORIGIN.
+    await expect(requireUser(post("https://evil.example"))).rejects.toMatchObject({
+      status: 403,
+      code: "BAD_ORIGIN",
+    });
+    // Missing origin on a mutation: 403 BAD_ORIGIN.
+    await expect(requireUser(post())).rejects.toMatchObject({ status: 403, code: "BAD_ORIGIN" });
+
+    // GET requests are unaffected (no Origin needed).
+    const getReq = new Request("http://localhost:3000/api/protected", {
+      headers: { cookie: `${SESSION_COOKIE}=${token}` },
+    });
+    await expect(requireUser(getReq)).resolves.toBeTruthy();
+  });
+
+  it("guard: a role typo fails to compile and is denied at runtime (H-110 F7)", async () => {
+    const listener = await createUserWithSession("LISTENER");
+    await expect(
+      // @ts-expect-error H-110 F7: requireRole takes the Prisma Role enum —
+      // a typo like ADIMN must break the build, not silently deny at runtime.
+      requireRole(requestWithCookie(`tok-${listener.user.id}`), "ADIMN"),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
   it("auth cookies: httpOnly + sameSite=lax, secure only in production; adapter tokens are single-use", async () => {
     const devOptions = makeAuthOptions(loadEnv());
     const devCookie = devOptions.cookies!.sessionToken!;
