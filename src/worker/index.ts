@@ -4,6 +4,8 @@
 
 import { loadEnv } from "@/server/env";
 import { startScheduler } from "@/server/broadcast/scheduler";
+import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
+import { startMaintenance } from "@/server/maintenance/runner";
 
 const env = loadEnv();
 
@@ -16,6 +18,7 @@ async function shutdown(signal: string): Promise<void> {
   stopping = true;
   console.log(`[worker] ${signal} received — stopping scheduler`);
   await scheduler.stop(); // releases the advisory lock
+  await maintenance.stop();
   console.log("[worker] exiting cleanly");
   process.exit(0);
 }
@@ -25,6 +28,11 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 
 console.log("[worker] broadcast scheduler started (H-104)");
 const scheduler = startScheduler();
+
+// H-210: retention and housekeeping jobs run in this same single-instance
+// process, sequentially and non-overlapping (S7).
+console.log("[worker] maintenance jobs started (H-210)");
+const maintenance = startMaintenance({ jobs: makeMaintenanceJobs() });
 
 void scheduler.done().then(() => {
   console.log("[worker] scheduler stopped; lock released");

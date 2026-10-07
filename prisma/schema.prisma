@@ -223,6 +223,7 @@ model Track {
   slots        BroadcastSlot[]
   reactions    Reaction[]
   listens      ListenEvent[]
+  aggregates   ListenAggregate[]
   scores       TrackScore[]
   chartEntries ChartEntry[]
   playlistItems PlaylistItem[]
@@ -357,6 +358,21 @@ model ListenEvent {
 
   @@index([trackId, createdAt])
   @@index([createdAt])
+}
+
+// Per-track per-day listening sums (H-210): the durable result of the S7
+// retention job that aggregates and deletes raw ListenEvent rows.
+model ListenAggregate {
+  trackId     String
+  day         DateTime // UTC midnight of the day
+  plays       Int      @default(0)
+  msListened  BigInt   @default(0)
+  completions Int      @default(0)
+  skips       Int      @default(0)
+
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([trackId, day])
 }
 
 model TrackScore {
