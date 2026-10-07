@@ -107,6 +107,24 @@ const config = [
     },
   },
   {
+    // H-105: UI strings must go through next-intl message catalogs. A small
+    // local no-restricted-syntax selector (chosen over a third-party plugin —
+    // no dependency, exact semantics): any JSXText containing non-whitespace
+    // is an error, so visible literals cannot sneak into components.
+    files: ["src/**/*.tsx"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...noEnvReadSelectors,
+        {
+          selector: "JSXText[value=/\\S/]",
+          message:
+            "i18n: UI strings must come from the message catalogs via useTranslations/getTranslations (H-105).",
+        },
+      ],
+    },
+  },
+  {
     // The sanctioned reader: every spelling is allowed here (H-107/H-109).
     files: ["src/server/env.ts"],
     rules: {
