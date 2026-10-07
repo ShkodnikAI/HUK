@@ -6,7 +6,25 @@ P2 later. Classes: `[core] [security] [process] [docs] [bugfix] [feature]`.
 `OD` = contains an owner decision point (must be decided in the issue before work starts).
 Every card inherits the contract in `AGENTS.md` §6 and the audit in `docs/AUDIT.md`.
 
-Gates between waves are checked by the Auditor and signed off by the Owner.
+Gates between waves are audited by the Auditor after the merges and recorded in `docs/audits/`; the next wave is
+published only after the record is on `main`. Where a published issue differs from its card below, the issue wins.
+
+## Index of published naryads (maintained by the Auditor; source of truth for publishing)
+
+| Card | Issue | Wave | State (2026-10-07) |
+|---|---|---|---|
+| H-001 | #2 | W0 | merged (PR #12) |
+| H-002 | #3 | W0 | merged (PR #15; record corrected in PR #20) |
+| H-003 | #4 | W0 | merged (PR #14) |
+| H-107 | #16 | W0 follow-up | merged (PR #19) |
+| H-108 | #21 | W1 follow-up | open |
+| H-109 | #22 | W1 follow-up | open |
+| H-101 | #23 | W1 | open |
+| H-103 | #24 | W1 | open |
+| H-102 | #25 | W1 | open |
+| H-104 | #26 | W1 | open |
+| H-105 | #27 | W1 | open |
+| H-106 | #28 | W1 | open |
 
 ---
 
@@ -59,6 +77,10 @@ Done: manual checklist (screen lock on Android/iOS Safari documented in the PR),
 **H-106 — Seed content pipeline.** `[core]` deps H-101
 Scope: port procedural generator to `scripts/seed-content`, output to an ignored dir, upload step for object storage/dev dir, idempotent seed registers `SEED` tracks.
 Done: no audio committed; `bun run seed:content` produces ≥ 9 tracks; scheduler plays them locally.
+
+**H-108 — Non-root containers.** `[security]` Issue #21. Finding F3 of gate W0.
+
+**H-109 — AST-based environment guard and edge-runtime check.** `[security]` Issue #22. Findings N1, N2 of gate W0.
 
 Gate W1→W2: Auditor security review of H-102/H-103 (authorization matrix, rate limits).
 

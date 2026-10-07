@@ -3,19 +3,43 @@
 The Auditor (Claude, in chat) reviews every naryad PR and each wave gate. The
 Agent that wrote the code never signs its own review (not a self-check).
 
-## 1. Per-PR loop
+## 1. Post-merge audit loop
 
-1. Owner (or Agent) gives the Auditor the PR URL (repo is public) or the diff, the naryad issue and the Agent's report.
-2. Auditor reads the naryad first: scope, fact base, "done" criteria, owner-decision box.
-3. Auditor verifies — it does **not** trust the report:
+The Agent merges its own PRs when every required check is green (D11, `AGENTS.md` §6). The Auditor therefore verifies
+**after** the merge, and controls what is built next by controlling what is published.
+
+1. **Trigger.** The Owner passes the Agent's report or the PR URL (the repo is public) to the Auditor; independently the
+   Auditor audits every wave at its end (gate, §4).
+2. The Auditor reads the naryad issue first: scope, fact base, "done" criteria, owner-decision box.
+3. The Auditor verifies — it does **not** trust the report:
    - fact base re-checked against the code (file:line exists and says what is claimed);
-   - scope respected (files touched ⊆ declared scope; anything else is flagged);
-   - contracts: tests exist, fail without the change, pass with it; CI green **on the merge commit**;
-   - security invariants S1–S10 (AGENTS §5) against the diff;
-   - the three greps (§3) over the naryad's zone;
-   - docs updated in the same PR.
-4. Verdict: **ACCEPT** · **ACCEPT WITH FOLLOW-UPS** (each follow-up becomes a naryad) · **REWORK** (list of blocking findings) · **ESCALATE** (needs an owner decision).
-5. Findings use severities: **Critical** (exploitable now / data loss / legal exposure), **High**, **Medium**, **Low**, **Note**.
+   - scope respected (files touched are within the declared scope; anything else is flagged);
+   - contracts: tests exist, fail without the change, pass with it;
+   - **merge hygiene:** the required checks were green on the merge commit (read the check-runs), no bypass was used;
+   - security invariants S1–S10 (`AGENTS.md` §5) against the diff;
+   - the three greps (§3) over the naryad's zone, and the gates re-run on the current `main` (lint, typecheck, test, build,
+     boot checks);
+   - the report lists every task of the naryad; docs were updated in the same PR.
+4. **Verdict:** **ACCEPT** · **ACCEPT WITH FOLLOW-UPS** (each follow-up becomes a naryad) · **DEFECT** (blocking findings
+   become `[bugfix]` naryads, P0/P1) · **REVERT** (Critical: revert-first naryad, `AGENTS.md` §6.8) · **ESCALATE** (needs an
+   Owner decision).
+5. Severities: **Critical** (exploitable now / data loss / legal exposure), **High**, **Medium**, **Low**, **Note**.
+6. **Records.** Audit records live in `docs/audits/`, are written by the Auditor only and committed by the Auditor through a
+   PR (merged by the Agent on green CI). Facts supplied by the Agent are labelled "reported by the Agent" unless the Auditor
+   re-ran them. The Agent never writes or reconstructs a record.
+
+### 1a. Publishing naryads (Auditor)
+
+- Written in the form fields of `.github/ISSUE_TEMPLATE/naryad.yml` plus *Step 0* (sync, dependencies merged, wave gate
+  recorded). The fact base is verified by the Auditor against the code. Every issue carries the marker
+  `<!-- naryad:H-xxx -->` and the labels `naryad` and `P0/P1/P2`.
+- Since nothing is reviewed before the merge, security-class naryads must have testable done criteria (authorization
+  matrices, probes that turn CI red, concurrency tests), and dependants name their dependency in *Step 0*.
+- **Idempotency.** The source of truth for "was this card already published" is the index table in `docs/PLAN.md`
+  (card → issue number). Before publishing, read the index and read each known issue by number (`GET /issues/N`). Never rely
+  on the issue *list* endpoint: it was observed to lag for minutes and a re-run created duplicates (2026-10-06).
+  After publishing, the Auditor updates the index through a PR.
+- Where an issue differs from its card in `docs/PLAN.md`, the issue wins and the card is updated.
 
 ## 2. Risk-review checklist (go by risk, not by order)
 
@@ -51,8 +75,9 @@ reaching the same effect and close it at the common point or list it with a reas
 
 ## 4. Wave gates
 
-Auditor produces `docs/audits/YYYY-MM-DD-<gate>.md` (template §5) and the Owner
-signs the gate by merging a PR that adds the report. No next-wave naryad starts earlier.
+At the end of each wave the Auditor audits the merged work against the table below, commits
+`docs/audits/YYYY-MM-DD-<gate>.md` (template §5) through a PR (merged by the Agent on green CI) and only then
+publishes the next wave. No next-wave naryad exists before the gate record is on `main`.
 
 | Gate | Mandatory checks |
 |---|---|

@@ -22,3 +22,7 @@ next-env.d.ts
 *.flac
 *.ogg
 *.m4a
+
+# Python bytecode
+__pycache__/
+*.pyc
