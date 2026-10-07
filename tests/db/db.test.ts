@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
@@ -1918,5 +1918,206 @@ describe("audius provider (H-202, D3: ships disabled)", () => {
         throw new Error("must not fetch");
       } }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+  });
+});
+
+describe.skipIf(!databaseUrl)("track submission (H-203)", () => {
+  const db = makeClient();
+  const realLoader = createDefaultLoader();
+
+  const audioBytes = Buffer.from("fake-audio-bytes");
+  let server: { port: number; close: () => Promise<void> };
+
+  const localLoader: SafeLoader = async (req) => {
+    const localUrl = new URL(`http://127.0.0.1:${server.port}${req.url.pathname}${req.url.search}`);
+    return realLoader({ ...req, url: localUrl, pinnedAddress: "127.0.0.1", headers: { ...req.headers, host: req.headers.host } });
+  };
+  const seam = () => ({
+    loader: localLoader,
+    resolver: async () => ["203.0.113.10"],
+    portAllowlist: [443, server.port],
+    client: db as never,
+  });
+
+  const validSubmission = {
+    title: "My Track",
+    source: { provider: "DIRECT_URL", url: "https://author-host.test/track.mp3" },
+    rightsOwned: true,
+    aiGenerated: false,
+    humanContribution: "vocals and guitar by me",
+    language: "en",
+    instrumental: false,
+    licenseScope: "RADIO_ONLY",
+    tosVersion: "0.0-draft",
+  };
+
+  beforeAll(async () => {
+    server = await new Promise((resolve) => {
+      const s = http.createServer((req, res) => {
+        if (req.method === "HEAD") {
+          res.writeHead(200, { etag: '"t1"', "content-length": String(audioBytes.byteLength) });
+          res.end();
+          return;
+        }
+        res.writeHead(200, { "content-length": String(audioBytes.byteLength) });
+        res.end(audioBytes);
+      });
+      s.listen(0, "127.0.0.1", () =>
+        resolve({ port: (s.address() as { port: number }).port, close: () => new Promise<void>((r) => s.close(() => r())) }),
+      );
+    });
+  });
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  async function artist() {
+    const u = await db.user.create({ data: { email: `artist-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.example`, role: "ARTIST" } });
+    const profile = await db.artistProfile.create({ data: { userId: u.id, handle: `artist-${Math.floor(Math.random() * 1e9)}`, displayName: "Test Artist" } });
+    await db.session.create({ data: { userId: u.id, sessionToken: `tok-${u.id}`, expires: new Date(Date.now() + 86400000) } });
+    return { user: u, profileId: profile.id };
+  }
+
+  async function postTracks(submission: unknown, u: { id: string }) {
+    const { POST } = await import("@/app/api/tracks/route");
+    return POST(
+      new Request("http://localhost:3000/api/tracks", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost:3000", cookie: `${SESSION_COOKIE}=tok-${u.id}` },
+        body: JSON.stringify(submission),
+      }),
+      { params: Promise.resolve({}) },
+    );
+  }
+
+  it("a valid submission creates consent rows with hashed IP, a PENDING track and the source (service level with the H-202 seam)", async () => {
+    const { user: u, profileId } = await artist();
+    const { loadEnv: le } = await import("@/server/env");
+    const { submitTrack } = await import("@/server/tracks/submit");
+    const result = await submitTrack(
+      u.id,
+      "203.0.113.9",
+      { ...validSubmission, source: { provider: "DIRECT_URL", url: "https://author-host.test/track.mp3" } } as never,
+      le(),
+      seam() as never,
+    );
+    const track = await db.track.findUniqueOrThrow({ where: { id: result.trackId } });
+    expect(track.artistId).toBe(profileId);
+    expect(track.title).toBe("My Track");
+    expect(track.status).toBe("PENDING");
+    expect(track.rightsDeclaredAt).not.toBeNull();
+    const src = await db.trackSource.findUniqueOrThrow({ where: { trackId: track.id } });
+    expect(src.provider).toBe("DIRECT_URL");
+    expect(src.etag).toBe('"t1"');
+    expect(src.byteLength).toBe(BigInt(audioBytes.byteLength));
+    const consents = await db.consent.findMany({ where: { userId: u.id } });
+    expect(consents).toHaveLength(2);
+    expect(consents.map((c) => c.document).sort()).toEqual(["artist-terms", "tos"]);
+    for (const c of consents) {
+      expect(c.ipHash).toMatch(/^[0-9a-f]{32}$/); // salted hash, never a raw IP
+      expect(c.ipHash).not.toContain("203.0.113.9");
+    }
+    const audits = await db.auditLog.findMany({ where: { action: "tracks.submitted" } });
+    expect(audits).toHaveLength(1);
+  });
+
+  it("validation: Cyrillic, CJK and emoji titles pass (service); control characters, oversized fields, rightsOwned:false and AI half-declarations fail", async () => {
+    const { user: u, profileId } = await artist();
+    const { loadEnv: le } = await import("@/server/env");
+    const { submitTrack } = await import("@/server/tracks/submit");
+    const res = await submitTrack(
+      u.id,
+      null,
+      { ...validSubmission, title: "Песня 幻夢 🎸", instrumental: true, language: undefined, source: { provider: "DIRECT_URL", url: "https://author-host.test/a.mp3" } } as never,
+      le(),
+      seam() as never,
+    );
+    expect(await db.track.findUniqueOrThrow({ where: { id: res.trackId } }).then((t) => t.title)).toBe("Песня 幻夢 🎸");
+    expect(await db.track.findUniqueOrThrow({ where: { id: res.trackId } }).then((t) => t.language)).toBeNull();
+
+    // Route-level rejections happen before any network access.
+    expect((await postTracks({ ...validSubmission, title: "bad\u0000title" }, u)).status).toBe(422);
+    expect((await postTracks({ ...validSubmission, title: "a".repeat(201) }, u)).status).toBe(422);
+    expect((await postTracks({ ...validSubmission, rightsOwned: false as never }, u)).status).toBe(422);
+    expect(
+      (await postTracks({ ...validSubmission, aiGenerated: true, aiTool: "Suno", aiPlanAtCreation: undefined }, u)).status,
+    ).toBe(422);
+    expect((await postTracks({ ...validSubmission, language: undefined }, u)).status).toBe(422);
+    expect((await postTracks({ ...validSubmission, tosVersion: "9.9-final" }, u)).status).toBe(422);
+  });
+
+  it("quota: 10 parallel submissions with an author cap of 2 yield exactly 2 created", async () => {
+    const { user: u, profileId } = await artist();
+    const { loadEnv: le } = await import("@/server/env");
+    const { submitTrack } = await import("@/server/tracks/submit");
+    const results = await Promise.allSettled(
+      Array.from({ length: 10 }, (_, i) =>
+        submitTrack(
+          u.id,
+          null,
+          { ...validSubmission, title: `Track ${i}`, source: { provider: "DIRECT_URL", url: "https://author-host.test/t.mp3" } } as never,
+          le(),
+          seam() as never,
+        ).then((r) => 201),
+      ),
+    );
+    const statuses = results.map((r) => (r.status === "fulfilled" ? r.value : (r.reason as { status?: number }).status ?? 0));
+    expect(statuses.filter((s) => s === 201)).toHaveLength(2);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(8);
+    expect(await db.track.count({ where: { artistId: profileId } })).toBe(2);
+  });
+
+  it("the invite gate: with INVITE_ONLY=true a non-ARTIST role is 403; PENDING never reaches /api/radio/now (S2)", async () => {
+    process.env.INVITE_ONLY = "true";
+    const listener = await db.user.create({ data: { email: `l-${Date.now()}@test.example` } });
+    await db.session.create({ data: { userId: listener.id, sessionToken: `tok-${listener.id}`, expires: new Date(Date.now() + 86400000) } });
+    const { POST } = await import("@/app/api/tracks/route");
+    const res = await POST(
+      new Request("http://localhost:3000/api/tracks", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost:3000", cookie: `${SESSION_COOKIE}=tok-${listener.id}` },
+        body: JSON.stringify(validSubmission),
+      }),
+      { params: Promise.resolve({}) },
+    );
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("FORBIDDEN");
+
+    // A PENDING track never appears in /api/radio/now.
+    const { user: u, profileId } = await artist();
+    const { radioNow } = await import("@/app/api/radio/now/route");
+    const pendingTrack = await db.track.create({ data: { artistId: profileId, title: "pending", status: "PENDING", durationSec: 60 } });
+    await db.broadcastSlot.createMany({
+      data: [{ seq: 1n, trackId: pendingTrack.id, startsAt: new Date(Date.now() - 1000), endsAt: new Date(Date.now() + 60000) }],
+    });
+    const now = await radioNow(Date.now(), db);
+    const served = [...(now.current ? [now.current.track.id] : []), ...now.next.map((s) => s.track.id)];
+    expect(served).not.toContain(pendingTrack.id);
+  });
+
+  it("/api/tracks/mine returns only the author's tracks with status and no one else's", async () => {
+    const { user: u, profileId } = await artist();
+    const other = await artist();
+    const mine = await db.track.create({ data: { artistId: profileId, title: "mine", status: "PENDING", durationSec: 1 } });
+    await db.track.create({ data: { artistId: other.profileId, title: "theirs", status: "APPROVED", durationSec: 1 } });
+    const { GET } = await import("@/app/api/tracks/mine/route");
+    const res = await GET(
+      new Request("http://localhost:3000/api/tracks/mine", { headers: { cookie: `${SESSION_COOKIE}=tok-${u.id}` } }),
+      { params: Promise.resolve({}) },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { tracks: Array<{ id: string; statementOfReasons: string | null }> };
+    expect(body.tracks.map((t) => t.id)).toEqual([mine.id]);
+    expect(body.tracks[0].statementOfReasons).toBeNull();
   });
 });

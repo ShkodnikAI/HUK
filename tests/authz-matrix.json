@@ -1,6 +1,13 @@
 {
   "_comment": "Authorization matrix (H-102). Discovered routes must appear here; the test calls each handler per actor and compares statuses. 'skipCall: true' routes are public by design and exercised by dedicated flow tests instead (Auth.js internals need full sign-in machinery).",
-  "actors": ["anonymous", "LISTENER", "ARTIST", "MODERATOR", "ADMIN", "banned"],
+  "actors": [
+    "anonymous",
+    "LISTENER",
+    "ARTIST",
+    "MODERATOR",
+    "ADMIN",
+    "banned"
+  ],
   "routes": {
     "/api/health": {
       "method": "GET",
@@ -65,6 +72,28 @@
         "anonymous": 401,
         "LISTENER": 403,
         "ARTIST": 403,
+        "MODERATOR": 403,
+        "ADMIN": 403,
+        "banned": 403
+      }
+    },
+    "/api/tracks": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 403,
+        "ARTIST": 400,
+        "MODERATOR": 403,
+        "ADMIN": 403,
+        "banned": 403
+      }
+    },
+    "/api/tracks/mine": {
+      "method": "GET",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 403,
+        "ARTIST": 200,
         "MODERATOR": 403,
         "ADMIN": 403,
         "banned": 403
