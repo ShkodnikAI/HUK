@@ -24,6 +24,10 @@ const schema = z.object({
   // Optional at scaffold stage; required by H-103 when IP hashing lands.
   EMAIL_SERVER: z.string().optional(),
   EMAIL_FROM: z.string().default("HUK <no-reply@example.com>"),
+  // Base URL under which the seed audio files are served (H-106). Files are
+  // generated locally (scripts/seed-content) and served from public/seed/ in
+  // development; production hosting is H-504.
+  SEED_AUDIO_BASE_URL: z.string().min(1).optional(),
   AUDIUS_API_KEY: z.string().optional(),
   ACOUSTID_API_KEY: z.string().optional(),
   AUDD_API_TOKEN: z.string().optional(),

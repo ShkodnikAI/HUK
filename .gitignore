@@ -13,6 +13,7 @@ coverage/
 next-env.d.ts
 # generated seed audio and local data are never committed
 /seed-audio/
+/public/seed/
 /tmp/
 *.db
 *.sqlite

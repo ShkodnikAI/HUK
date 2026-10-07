@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cleanTables, databaseUrl, makeClient, skipMessage } from "./helpers";
 import { seed } from "../../prisma/seed";
 import { purgeExpiredBuckets, rateLimit } from "@/server/ratelimit";
 import { endCurrentSlotEarly, startScheduler } from "@/server/broadcast/scheduler";
 import { radioNow } from "@/app/api/radio/now/route";
+import { seedTracks, type SeedFileInput } from "../../prisma/seed-tracks";
 
 /** Polls `cond` until true or the timeout elapses (CI runners are slow). */
 async function pollUntil(cond: () => Promise<boolean> | boolean, timeoutMs: number, stepMs = 200): Promise<boolean> {
@@ -487,4 +489,76 @@ describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", ()
     }
     expect(heldAfter).toBe(false);
   }, 30_000);
+});
+
+describe.skipIf(!databaseUrl)("seed:tracks (H-106)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  const fixture = (name: string, content: string): SeedFileInput => ({
+    fileName: name,
+    bytes: new TextEncoder().encode(content),
+    durationSec: 100.2,
+    title: name.replace(/\.mp3$/i, ""),
+  });
+
+  it("is idempotent: two runs leave identical row counts", async () => {
+    const files = [
+      fixture("synthwave_neon_rain.mp3", "audio-bytes-one"),
+      fixture("lofi_study_room.mp3", "audio-bytes-two"),
+      fixture("dance_pulse_floor.mp3", "audio-bytes-three"),
+    ];
+
+    await seedTracks(db, files);
+    const afterFirst = {
+      tracks: await db.track.count(),
+      sources: await db.trackSource.count(),
+    };
+
+    await seedTracks(db, files);
+    const afterSecond = {
+      tracks: await db.track.count(),
+      sources: await db.trackSource.count(),
+    };
+
+    expect(afterSecond).toEqual(afterFirst);
+    expect(afterSecond.tracks).toBe(3);
+    expect(afterSecond.sources).toBe(3);
+  });
+
+  it("registers SEED tracks exactly as the naryad specifies", async () => {
+    const bytes = new TextEncoder().encode("procedural audio bytes");
+    await seedTracks(db, [fixture("lofi_study_room.mp3", "procedural audio bytes")]);
+
+    const source = await db.trackSource.findFirstOrThrow({
+      where: { externalId: "lofi_study_room.mp3" },
+      include: { track: true },
+    });
+    expect(source.provider).toBe("SEED");
+    expect(source.url).toBe("/seed/lofi_study_room.mp3");
+    expect(source.contentHash).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(Number(source.byteLength)).toBe(bytes.byteLength);
+
+    expect(source.track.status).toBe("APPROVED");
+    expect(source.track.moderatedBy).toBe("seed");
+    expect(source.track.aiGenerated).toBe(true);
+    expect(source.track.aiTool).toBe("procedural (HUK seed script)");
+    expect(source.track.licenseScope).toBe("RADIO_AND_PLAYLISTS");
+    expect(source.track.durationSec).toBe(100.2);
+  });
+
+  it("updates contentHash when the file changes, still without duplicating rows", async () => {
+    await seedTracks(db, [fixture("dance_pulse_floor.mp3", "v1 bytes")]);
+    await seedTracks(db, [fixture("dance_pulse_floor.mp3", "v2 bytes — regenerated")]);
+    const sources = await db.trackSource.findMany({ where: { externalId: "dance_pulse_floor.mp3" } });
+    expect(sources).toHaveLength(1);
+    expect(sources[0].contentHash).toBe(createHash("sha256").update("v2 bytes — regenerated").digest("hex"));
+  });
 });

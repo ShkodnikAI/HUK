@@ -1,0 +1,3 @@
+# HUK seed-content generator (scripts/seed-content/make_seed.py)
+numpy>=1.26
+scipy>=1.11
