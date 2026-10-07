@@ -24,6 +24,8 @@ jobs:
         run: node scripts/ci/check-large-files.mjs
       - name: No direct process.env outside src/server/env.ts (S8, H-107)
         run: node scripts/ci/check-no-process-env.mjs
+      - name: No edge runtime — Node.js only (S8 boot validation, H-109)
+        run: node scripts/ci/check-no-edge-runtime.mjs
 
   secrets:
     name: gitleaks (blocking)

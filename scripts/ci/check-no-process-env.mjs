@@ -1,11 +1,17 @@
 #!/usr/bin/env node
-// S8 guard (H-107): the only sanctioned reader of process.env in src/ is
-// src/server/env.ts. Every other module must go through loadEnv() so the
-// environment stays validated once, at boot (AGENTS §5 S8, src/server/env.ts).
-//
-// Single documented exception: src/instrumentation.ts reads process.env.NEXT_PHASE
-// on a line marked H-107-EXCEPTION (build-phase skip). The guard allows at most
-// ONE marked occurrence across all of src/ — the exception must stay single.
+// S8 guard v2 (H-107 + H-109). Two layers of enforcement:
+//   1. ESLint no-restricted-syntax selectors (eslint.config.mjs) — AST level,
+//      catch every spelling (process.env, process["env"], globalThis.process,
+//      destructuring/aliasing of process, Bun.env, Deno.env, import.meta.env);
+//   2. THIS script — text level, two jobs that config cannot do:
+//        a) keep the single documented exception single: exactly one line in
+//           src/ may carry a direct process.env read together with the marker
+//           H-107-EXCEPTION (src/instrumentation.ts);
+//        b) fail on literal `process.env` code outside src/server/env.ts.
+//      Comments and string literals are stripped before matching, so a comment
+//      mentioning the phrase is NOT a violation (the H-107 v1 false positive).
+// Residual risk (documented): regex literals and `${}` interpolations inside
+// template literals are not parsed here — they are the ESLint layer's job.
 //
 // Usage: node scripts/ci/check-no-process-env.mjs   (wired into ci.yml `invariants`)
 
@@ -27,24 +33,65 @@ function walk(dir) {
   return out;
 }
 
+// Replace comments and string-literal contents with spaces, preserving line
+// numbers and code positions. Deliberately conservative: it cannot parse
+// regex literals or template `${}` interpolation — that is the ESLint
+// layer's responsibility (see header).
+function stripCommentsAndStrings(src) {
+  let out = "";
+  let i = 0;
+  // modes: code | line | block | squote | dquote | template
+  let mode = "code";
+  while (i < src.length) {
+    const c = src[i];
+    const d = src[i + 1] ?? "";
+    if (mode === "code") {
+      if (c === "/" && d === "/") { mode = "line"; out += "  "; i += 2; continue; }
+      if (c === "/" && d === "*") { mode = "block"; out += "  "; i += 2; continue; }
+      if (c === "'") { mode = "squote"; out += " "; i += 1; continue; }
+      if (c === '"') { mode = "dquote"; out += " "; i += 1; continue; }
+      if (c === "`") { mode = "template"; out += " "; i += 1; continue; }
+      out += c; i += 1; continue;
+    }
+    if (mode === "line") {
+      if (c === "\n") { mode = "code"; out += "\n"; } else { out += " "; }
+      i += 1; continue;
+    }
+    if (mode === "block") {
+      if (c === "*" && d === "/") { mode = "code"; out += "  "; i += 2; }
+      else { out += c === "\n" ? "\n" : " "; i += 1; }
+      continue;
+    }
+    // string modes
+    const q = mode === "squote" ? "'" : mode === "dquote" ? '"' : "`";
+    if (c === "\\") { out += "  "; i += 2; continue; }
+    if (c === "\n") { out += "\n"; i += 1; continue; }
+    if (c === q) { mode = "code"; out += " "; i += 1; continue; }
+    out += " "; i += 1;
+  }
+  return out;
+}
+
 const files = walk(ROOT);
 const violations = [];
-let markedOccurrences = 0;
+let markedCodeLines = 0;
 
 for (const file of files) {
   const key = relative(".", file).split(sep).join("/");
   if (SANCTIONED.has(key)) continue;
-  const lines = readFileSync(file, "utf8").split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    if (!lines[i].includes("process.env")) continue;
-    if (lines[i].includes(MARKER)) markedOccurrences++;
-    else violations.push(`${key}:${i + 1}: direct process.env read`);
+  const raw = readFileSync(file, "utf8");
+  const rawLines = raw.split("\n");
+  const codeLines = stripCommentsAndStrings(raw).split("\n");
+  for (let i = 0; i < codeLines.length; i++) {
+    if (!codeLines[i].includes("process.env")) continue;
+    if (rawLines[i]?.includes(MARKER)) markedCodeLines++;
+    else violations.push(`${key}:${i + 1}: direct process.env read in code`);
   }
 }
 
-if (markedOccurrences > 1) {
+if (markedCodeLines > 1) {
   violations.push(
-    `${markedOccurrences} occurrences of ${MARKER} found — the direct-read exception must stay single (H-107)`,
+    `${markedCodeLines} code lines carry the ${MARKER} marker — the direct-read exception must stay single (H-107)`,
   );
 }
 
@@ -56,6 +103,6 @@ if (violations.length > 0) {
 }
 
 console.log(
-  `check-no-process-env: OK — no direct process.env outside src/server/env.ts ` +
-    `(files scanned: ${files.length}, marked exceptions: ${markedOccurrences})`,
+  `check-no-process-env: OK — no direct process.env code outside src/server/env.ts ` +
+    `(files scanned: ${files.length}, marked exception lines: ${markedCodeLines})`,
 );
