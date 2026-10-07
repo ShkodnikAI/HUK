@@ -22,6 +22,8 @@ jobs:
         run: node scripts/ci/check-docs-language.mjs
       - name: No large files / databases in git
         run: node scripts/ci/check-large-files.mjs
+      - name: No direct process.env outside src/server/env.ts (S8, H-107)
+        run: node scripts/ci/check-no-process-env.mjs
 
   secrets:
     name: gitleaks (blocking)
