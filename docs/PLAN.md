@@ -11,20 +11,32 @@ published only after the record is on `main`. Where a published issue differs fr
 
 ## Index of published naryads (maintained by the Auditor; source of truth for publishing)
 
-| Card | Issue | Wave | State (2026-10-07) |
+| Card | Issue | Wave | State (2026-10-07, after gate W1) |
 |---|---|---|---|
 | H-001 | #2 | W0 | merged (PR #12) |
 | H-002 | #3 | W0 | merged (PR #15; record corrected in PR #20) |
 | H-003 | #4 | W0 | merged (PR #14) |
 | H-107 | #16 | W0 follow-up | merged (PR #19) |
-| H-108 | #21 | W1 follow-up | open |
-| H-109 | #22 | W1 follow-up | open |
-| H-101 | #23 | W1 | open |
-| H-103 | #24 | W1 | open |
-| H-102 | #25 | W1 | open |
-| H-104 | #26 | W1 | open |
-| H-105 | #27 | W1 | open |
-| H-106 | #28 | W1 | open |
+| H-108 | #21 | W1 follow-up | merged (PR #30; Docker evidence still open, see H-111) |
+| H-109 | #22 | W1 follow-up | merged (PR #32) |
+| H-101 | #23 | W1 | merged (PR #33) |
+| H-103 | #24 | W1 | merged (PR #35) |
+| H-102 | #25 | W1 | merged (PR #39) |
+| H-104 | #26 | W1 | merged (PR #36, fix #37) |
+| H-105 | #27 | W1 | merged (PR #40) |
+| H-106 | #28 | W1 | merged (PR #38) |
+| H-110 | #42 | W2 | open |
+| H-111 | #43 | W2 | open |
+| H-201 | #44 | W2 | open |
+| H-209 | #45 | W2 | open |
+| H-202 | #46 | W2 | open |
+| H-203 | #47 | W2 | open |
+| H-204 | #48 | W2 | open |
+| H-205 | #49 | W2 | open |
+| H-206 | #50 | W2 | open |
+| H-207 | #51 | W2 | open |
+| H-208 | #52 | W2 | open |
+| H-210 | #53 | W2 | open |
 
 ---
 
@@ -115,6 +127,18 @@ Done: takedown of the currently playing track ends it within one scheduler tick;
 **H-207 — Moderator console.** `[feature]` deps H-204, H-206
 Scope: queue UI with transcript, AI rationale, audit trail, approve/reject/restrict, role-guarded.
 Done: only MODERATOR/ADMIN reach it; every action writes `AuditLog`.
+
+**Added at gate W1** (see `docs/audits/2026-10-07-gate-W1.md`):
+
+**H-110 — W1 hardening.** `[security]` Issue #42. Findings F1-F4, F6-F8, F12 (next-auth base URL, limiter parity, /now filter, bounded body, Origin check). Runs first.
+
+**H-111 — Compose usable again + Docker smoke job in CI.** `[core]` Issue #43. Finding F5.
+
+**H-208 — ASR and LLM adapters.** `[core]` `OD` Issue #52. Providers, spend cap and policy approval (D2) are Owner decisions.
+
+**H-209 — Invites and artist onboarding.** `[feature]` Issue #45.
+
+**H-210 — Worker maintenance jobs (retention, S7).** `[security]` Issue #53.
 
 Gate W2→W3: Auditor red-team pass (moderation bypass, SSRF, injection, budget exhaustion). Owner decisions D3 (Audius terms) and D2 (link policy) closed.
 
