@@ -16,5 +16,11 @@
   },
   "language": {
     "label": "Language"
+  },
+  "submit": {
+    "title": "Submit a track",
+    "description": "Publish your own music on HUK. You keep your files — HUK links to them and stores only metadata and hashes.",
+    "betaNote": "The platform is in an invite-only beta: create your artist profile by redeeming an invite code, then submit tracks.",
+    "apiNote": "Submission currently goes through POST /api/tracks (ARTIST sessions); the guided form ships with the console naryads."
   }
 }
