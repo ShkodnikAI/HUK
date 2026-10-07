@@ -14,12 +14,14 @@
 
 export async function register(): Promise<void> {
   // The ONLY direct read of the process environment permitted outside
-  // src/server/env.ts (enforced by scripts/ci/check-no-process-env.mjs).
+  // src/server/env.ts (enforced by scripts/ci/check-no-process-env.mjs and
+  // by the AST-level no-restricted-syntax selectors in eslint.config.mjs).
   // Purpose: skip env validation at build time; `next start` and `next dev`
   // never set phase-production-build, so validation always runs in a server
   // process. The marker H-107-EXCEPTION must stay on the same line as the
   // guarded read — the CI guard counts marked occurrences and keeps the
   // exception single.
+  // eslint-disable-next-line no-restricted-syntax -- the single documented S8 exception (H-107, H-109)
   if (process.env.NEXT_PHASE === "phase-production-build") return; // H-107-EXCEPTION
 
   const { loadEnv } = await import("@/server/env");
