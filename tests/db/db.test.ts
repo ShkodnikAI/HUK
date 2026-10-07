@@ -1,7 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { spawn } from "node:child_process";
 import { cleanTables, databaseUrl, makeClient, skipMessage } from "./helpers";
 import { seed } from "../../prisma/seed";
 import { purgeExpiredBuckets, rateLimit } from "@/server/ratelimit";
+import { endCurrentSlotEarly, startScheduler } from "@/server/broadcast/scheduler";
+import { radioNow } from "@/app/api/radio/now/route";
 
 // DB integration tests (H-101), single file so the suites never run in
 // parallel workers: every suite TRUNCATEs the shared tables in beforeEach and
@@ -257,4 +260,220 @@ describe.skipIf(!databaseUrl)("rate limiter (H-103)", () => {
     // A cutoff beyond the active window removes it.
     expect(await purgeExpiredBuckets(new Date(Date.now() + 60_000))).toBe(1);
   });
+});
+
+describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    // The scheduler tests manage their own clients and the advisory lock;
+    // AUTH_SECRET is needed because the scheduler uses the db.ts singleton.
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  async function seedLibrary(n: number): Promise<string[]> {
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const track = await db.track.create({
+        data: { title: `track ${i}`, status: "APPROVED", available: true, durationSec: 20 + i },
+      });
+      await db.trackSource.create({
+        data: { trackId: track.id, provider: "SEED", url: `https://example.com/${i}.mp3` },
+      });
+      ids.push(track.id);
+    }
+    return ids;
+  }
+
+  it("single writer: two schedulers on one Postgres — exactly one leads", async () => {
+    await seedLibrary(10);
+    const a = startScheduler({ tickMs: 100 });
+    const b = startScheduler({ tickMs: 100 });
+    await new Promise((r) => setTimeout(r, 1500));
+
+    expect(a.isLeader() && b.isLeader()).toBe(false); // never both
+    expect(a.isLeader() || b.isLeader()).toBe(true); // always one
+    const slots = await db.broadcastSlot.count();
+    expect(slots).toBeGreaterThan(0);
+    try {
+      await a.stop();
+      await b.stop();
+    } finally {
+      await a.stop().catch(() => {});
+      await b.stop().catch(() => {});
+    }
+  }, 20_000);
+
+  it("failover: when the leader stops, the follower takes over and seq continues without duplicates", async () => {
+    await seedLibrary(10);
+    const a = startScheduler({ tickMs: 100 });
+    await new Promise((r) => setTimeout(r, 800));
+    expect(a.isLeader()).toBe(true);
+
+    const follower = startScheduler({ tickMs: 100 });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(follower.isLeader()).toBe(false);
+
+    const seqBefore = await db.stationState.findUnique({ where: { id: "main" } });
+    await a.stop();
+    await new Promise((r) => setTimeout(r, 1500)); // follower must take over
+    expect(follower.isLeader()).toBe(true);
+
+    const newSlots = await db.broadcastSlot.count();
+    expect(newSlots).toBeGreaterThan(0);
+    const seqAfter = await db.stationState.findUnique({ where: { id: "main" } });
+    expect(Number(seqAfter!.lastSeq)).toBeGreaterThanOrEqual(Number(seqBefore!.lastSeq));
+
+    // No duplicate seq (also enforced by the unique constraint).
+    const dupes = await db.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(*) AS n FROM (
+        SELECT "seq" FROM "BroadcastSlot" GROUP BY "seq" HAVING COUNT(*) > 1
+      ) d`;
+    expect(Number(dupes[0].n)).toBe(0);
+
+    await follower.stop().catch(() => {});
+    await a.stop().catch(() => {});
+  }, 30_000);
+
+  it("endCurrentSlotEarly shortens the live slot; the leader refills within a tick", async () => {
+    await seedLibrary(10);
+    const scheduler = startScheduler({ tickMs: 100 });
+    await new Promise((r) => setTimeout(r, 800));
+
+    const current = await db.broadcastSlot.findFirst({
+      where: { startsAt: { lte: new Date() }, endsAt: { gt: new Date() } },
+      orderBy: { seq: "asc" },
+    });
+    expect(current).not.toBeNull();
+
+    const shortened = await endCurrentSlotEarly(current!.trackId, new Date(Date.now() + 500));
+    expect(shortened).not.toBeNull();
+    expect(shortened!.endsAt.getTime()).toBeLessThan(current!.endsAt.getTime());
+
+    await new Promise((r) => setTimeout(r, 500)); // leader fills the gap next tick
+    const stillCurrent = await db.broadcastSlot.findFirst({
+      where: { startsAt: { lte: new Date(Date.now() + 500) }, endsAt: { gt: new Date(Date.now() + 500) } },
+      orderBy: { seq: "asc" },
+    });
+    // After the early end there is a replacement slot covering the moment.
+    try {
+      expect(stillCurrent).not.toBeNull();
+      expect(stillCurrent!.trackId).not.toBe(current!.trackId);
+    } finally {
+      await scheduler.stop();
+    }
+  }, 30_000);
+
+  it("/api/radio/now is a pure read: at most 2 queries, no moderation fields, public URL", async () => {
+    const ids = await seedLibrary(12);
+    const nowMs = Date.now();
+    // Slots: one covering now, a few upcoming.
+    await db.broadcastSlot.createMany({
+      data: [
+        { seq: 1n, trackId: ids[0], startsAt: new Date(nowMs - 10_000), endsAt: new Date(nowMs + 10_000) },
+        { seq: 2n, trackId: ids[1], startsAt: new Date(nowMs + 10_000), endsAt: new Date(nowMs + 30_000) },
+        { seq: 3n, trackId: ids[2], startsAt: new Date(nowMs + 30_000), endsAt: new Date(nowMs + 50_000) },
+      ],
+    });
+    // Moderation payload that must NOT leak.
+    await db.track.update({
+      where: { id: ids[0] },
+      data: { aiConfidence: 0.9, aiSummary: "internal", moderatedBy: "ai", status: "APPROVED" },
+    });
+
+    let queries = 0;
+    const countingClient = {
+      $queryRaw: (...args: unknown[]) => {
+        queries++;
+        return (db.$queryRaw as (...a: unknown[]) => unknown)(...args);
+      },
+    };
+    const result = await radioNow(nowMs, countingClient as never);
+    expect(queries).toBeLessThanOrEqual(2);
+
+    expect(result.current).not.toBeNull();
+    expect(result.current!.track.id).toBe(ids[0]);
+    expect(result.current!.track.audioUrl).toBe("https://example.com/0.mp3");
+    expect(result.current!.offsetMs).toBe(10_000);
+    expect(result.next).toHaveLength(2);
+    expect(result.next[0].track.id).toBe(ids[1]);
+
+    const bodyText = JSON.stringify(result);
+    expect(bodyText).not.toContain("aiConfidence");
+    expect(bodyText).not.toContain("aiSummary");
+    expect(bodyText).not.toContain("internal");
+    expect(bodyText).not.toContain("moderatedBy");
+  });
+
+  it("empty timeline → current: null, next: []", async () => {
+    const result = await radioNow(Date.now(), db);
+    expect(result.current).toBeNull();
+    expect(result.next).toEqual([]);
+  });
+
+  it("never schedules non-APPROVED or unavailable tracks (S2)", async () => {
+    await seedLibrary(5);
+    await db.track.create({ data: { title: "draft", status: "DRAFT", available: true, durationSec: 60 } });
+    await db.track.create({ data: { title: "gone", status: "APPROVED", available: false, durationSec: 60 } });
+    const scheduler = startScheduler({ tickMs: 100 });
+    await new Promise((r) => setTimeout(r, 1000));
+    const scheduled = await db.broadcastSlot.findMany({ select: { trackId: true } });
+    expect(scheduled.length).toBeGreaterThan(0);
+    const scheduledIds = new Set(scheduled.map((s) => s.trackId));
+    const forbidden = await db.track.findFirst({
+      where: { OR: [{ status: "DRAFT" }, { available: false }], id: { in: [...scheduledIds] } },
+    });
+    expect(forbidden).toBeNull();
+    await scheduler.stop();
+  }, 20_000);
+
+  it("the worker exits 0 on SIGTERM and releases the advisory lock", async () => {
+    await seedLibrary(5);
+    const envForWorker = {
+      ...process.env,
+      DATABASE_URL: databaseUrl!,
+      AUTH_SECRET: "test-only fixture value, not a credential",
+    };
+    const child = spawn("bun", ["src/worker/index.ts"], { env: envForWorker, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", (d: Buffer) => (output += d.toString()));
+    child.stderr.on("data", (d: Buffer) => (output += d.toString()));
+
+    // Wait for boot.
+    for (let i = 0; i < 40 && !output.includes("broadcast scheduler started"); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(output).toContain("broadcast scheduler started");
+
+    // The worker holds the lock once its first tick acquires it (poll: CI is
+    // slower than a local disk, so a single snapshot would race the boot).
+    let held = false;
+    for (let i = 0; i < 50 && !held; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const rows = await db.$queryRaw<{ held: boolean }[]>`
+        SELECT COUNT(*) > 0 AS held FROM pg_locks WHERE locktype = 'advisory' AND granted = true`;
+      held = rows[0].held;
+    }
+    expect(held).toBe(true);
+
+    child.kill("SIGTERM");
+    const exitCode: number = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? -1)));
+    expect(exitCode).toBe(0);
+    expect(output).toContain("exiting cleanly");
+
+    // The lock is released (poll briefly: the unlock happens just before exit).
+    let heldAfter = true;
+    for (let i = 0; i < 50 && heldAfter; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const rows = await db.$queryRaw<{ held: boolean }[]>`
+        SELECT COUNT(*) > 0 AS held FROM pg_locks WHERE locktype = 'advisory' AND granted = true`;
+      heldAfter = rows[0].held;
+    }
+    expect(heldAfter).toBe(false);
+  }, 30_000);
 });
