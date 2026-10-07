@@ -21,8 +21,11 @@ const schema = z.object({
   // The only client-IP header the platform trusts (H-103). Never
   // x-forwarded-for unless configured to it explicitly.
   CLIENT_IP_HEADER: z.string().min(1).optional(),
-  // Optional at scaffold stage; required by H-103 when IP hashing lands.
+  // SMTP for magic-link email (H-102); required in production (S8, fail loud).
   EMAIL_SERVER: z.string().optional(),
+  // Optional first-admin bootstrap (H-102): while no ADMIN exists, a sign-in
+  // with this verified email is promoted to ADMIN (audit entry written).
+  INITIAL_ADMIN_EMAIL: z.string().min(3).optional(),
   EMAIL_FROM: z.string().default("HUK <no-reply@example.com>"),
   // Base URL under which the seed audio files are served (H-106). Files are
   // generated locally (scripts/seed-content) and served from public/seed/ in
@@ -53,7 +56,7 @@ export type Env = z.infer<typeof schema>;
 // Settings that must be explicitly provided in production (H-103): the IP
 // hashing salt and the trusted client-IP header name are identity/security
 // parameters — a forgotten default would silently weaken S7.
-const REQUIRED_IN_PRODUCTION = ["IP_HASH_SALT", "CLIENT_IP_HEADER"] as const;
+const REQUIRED_IN_PRODUCTION = ["IP_HASH_SALT", "CLIENT_IP_HEADER", "EMAIL_SERVER"] as const;
 
 export function loadEnv(
   source: Record<string, string | undefined> = process.env,

@@ -172,14 +172,26 @@ describe("production env requirements (H-103)", () => {
     ).toThrow(/required in production/);
   });
 
-  it("starts in production when both are provided", () => {
+  it("starts in production when all required settings are provided", () => {
     const env = loadEnv({
       ...base,
       NODE_ENV: "production",
       IP_HASH_SALT: "test-only fixture value, not a credential",
       CLIENT_IP_HEADER: "cf-connecting-ip",
+      EMAIL_SERVER: "smtp://user:pass@localhost:1025",
     });
     expect(env.IP_HASH_SALT).toBe("test-only fixture value, not a credential");
+  });
+
+  it("refuses to start in production without EMAIL_SERVER (H-102)", () => {
+    expect(() =>
+      loadEnv({
+        ...base,
+        NODE_ENV: "production",
+        IP_HASH_SALT: "test-only fixture value, not a credential",
+        CLIENT_IP_HEADER: "cf-connecting-ip",
+      }),
+    ).toThrow(/EMAIL_SERVER/);
   });
 
   it("does not require them in development", () => {

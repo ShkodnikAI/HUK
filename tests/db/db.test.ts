@@ -1,12 +1,29 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { NextRequest } from "next/server";
 import { cleanTables, databaseUrl, makeClient, skipMessage } from "./helpers";
 import { seed } from "../../prisma/seed";
 import { purgeExpiredBuckets, rateLimit } from "@/server/ratelimit";
 import { endCurrentSlotEarly, startScheduler } from "@/server/broadcast/scheduler";
 import { radioNow } from "@/app/api/radio/now/route";
 import { seedTracks, type SeedFileInput } from "../../prisma/seed-tracks";
+import { PrismaAdapter } from "@next-auth/prisma-adapter";
+import { makeAuthOptions } from "@/server/auth/options";
+import { withSignInRateLimit } from "@/server/auth/signin-limit";
+import { loadEnv } from "@/server/env";
+import { SESSION_COOKIE, requireRole, requireSession, requireUser } from "@/server/guard";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
+
+interface MatrixFile {
+  actors: string[];
+  routes: Record<string, {
+    method: string;
+    skipCall?: boolean;
+    expected: Record<string, number>;
+  }>;
+}
 
 /** Polls `cond` until true or the timeout elapses (CI runners are slow). */
 async function pollUntil(cond: () => Promise<boolean> | boolean, timeoutMs: number, stepMs = 200): Promise<boolean> {
@@ -560,5 +577,279 @@ describe.skipIf(!databaseUrl)("seed:tracks (H-106)", () => {
     const sources = await db.trackSource.findMany({ where: { externalId: "dance_pulse_floor.mp3" } });
     expect(sources).toHaveLength(1);
     expect(sources[0].contentHash).toBe(createHash("sha256").update("v2 bytes — regenerated").digest("hex"));
+  });
+});
+
+describe.skipIf(!databaseUrl)("auth guard, matrix and magic-link flows (H-102)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    process.env.NEXTAUTH_URL ??= "http://localhost:3000";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  const future = (ms: number) => new Date(Date.now() + ms);
+
+  async function createUserWithSession(role: string, opts?: { banned?: boolean; deleted?: boolean }) {
+    const user = await db.user.create({
+      data: {
+        email: `${role.toLowerCase()}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.example`,
+        role: role as never,
+        bannedUntil: opts?.banned ? future(60 * 60 * 1000) : null,
+        deletedAt: opts?.deleted ? new Date() : null,
+      },
+    });
+    const session = await db.session.create({
+      data: { userId: user.id, sessionToken: `tok-${user.id}`, expires: future(24 * 60 * 60 * 1000) },
+    });
+    return { user, session };
+  }
+
+  function requestWithCookie(token: string): Request {
+    return new Request("http://localhost:3000/api/health", {
+      headers: { cookie: `${SESSION_COOKIE}=${token}` },
+    });
+  }
+
+  it("guard: 401 without a session, with an expired session, and fail-closed on garbage cookies", async () => {
+    await expect(requireUser(new Request("http://localhost:3000/"))).rejects.toMatchObject({ status: 401 });
+
+    const { user } = await createUserWithSession("LISTENER");
+    await db.session.update({
+      where: { sessionToken: `tok-${user.id}` },
+      data: { expires: new Date(Date.now() - 1000) },
+    });
+    await expect(requireUser(requestWithCookie(`tok-${user.id}`))).rejects.toMatchObject({ status: 401 });
+
+    // Fail closed: malformed cookies never yield a session or a 500.
+    await expect(
+      requireUser(new Request("http://localhost:3000/", { headers: { cookie: "%%%broken%%%" } })),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("guard: banned and deleted users get 403; a valid listener passes", async () => {
+    const banned = await createUserWithSession("LISTENER", { banned: true });
+    await expect(requireUser(requestWithCookie(`tok-${banned.user.id}`))).rejects.toMatchObject({
+      status: 403,
+      code: "BANNED",
+    });
+
+    const deleted = await createUserWithSession("LISTENER", { deleted: true });
+    await expect(requireUser(requestWithCookie(`tok-${deleted.user.id}`))).rejects.toMatchObject({
+      status: 403,
+      code: "ACCOUNT_DELETED",
+    });
+
+    const ok = await createUserWithSession("LISTENER");
+    const { user } = await requireUser(requestWithCookie(`tok-${ok.user.id}`));
+    expect(user.id).toBe(ok.user.id);
+
+    const { session } = await requireSession(requestWithCookie(`tok-${ok.user.id}`));
+    expect(session.sessionToken).toBe(`tok-${ok.user.id}`);
+  });
+
+  it("guard: requireRole enforces roles, ADMIN satisfies MODERATOR, changes apply on the next request", async () => {
+    const listener = await createUserWithSession("LISTENER");
+    await expect(
+      requireRole(requestWithCookie(`tok-${listener.user.id}`), "MODERATOR"),
+    ).rejects.toMatchObject({ status: 403 });
+
+    // A role change takes effect on the very next request (database sessions).
+    await db.user.update({ where: { id: listener.user.id }, data: { role: "MODERATOR" } });
+    const { user } = await requireRole(requestWithCookie(`tok-${listener.user.id}`), "MODERATOR");
+    expect(user.role).toBe("MODERATOR");
+
+    const admin = await createUserWithSession("ADMIN");
+    const adminRes = await requireRole(requestWithCookie(`tok-${admin.user.id}`), "MODERATOR");
+    expect(adminRes.user.role).toBe("ADMIN");
+  });
+
+  it("sign-in limiter: 429 with Retry-After after 5 sign-ins per hour per email", async () => {
+    const email = "limiter@test.example";
+    const env = loadEnv();
+    let last: Response | null = null;
+    for (let i = 0; i < 6; i++) {
+      const form = new FormData();
+      form.set("email", email);
+      form.set("csrfToken", "ignored-here");
+      const req = new NextRequest("http://localhost:3000/api/auth/signin/email", { method: "POST", body: form });
+      last = await withSignInRateLimit(req, env, () => Promise.resolve(Response.json({ ok: true })));
+      if (i < 5) expect(last.status).toBe(200);
+    }
+    expect(last!.status).toBe(429);
+    expect(Number(last!.headers.get("retry-after"))).toBeGreaterThan(0);
+    // A different email is unaffected (per-email buckets).
+    const other = new Request("http://localhost:3000/api/auth/signin/email", {
+      method: "POST",
+      body: (() => {
+        const f = new FormData();
+        f.set("email", "other@test.example");
+        return f;
+      })(),
+    });
+    const otherRes = await withSignInRateLimit(other, env, () => Promise.resolve(Response.json({ ok: true })));
+    expect(otherRes.status).toBe(200);
+  });
+
+  it("auth cookies: httpOnly + sameSite=lax, secure only in production; adapter tokens are single-use", async () => {
+    const devOptions = makeAuthOptions(loadEnv());
+    const devCookie = devOptions.cookies!.sessionToken!;
+    expect(devCookie.name).toBe("next-auth.session-token");
+    expect(devCookie.options.httpOnly).toBe(true);
+    expect(devCookie.options.sameSite).toBe("lax");
+    expect(devCookie.options.secure).toBe(false);
+
+    const prodOptions = makeAuthOptions({
+      ...(loadEnv() as never as Record<string, never>),
+      NODE_ENV: "production",
+      EMAIL_SERVER: "smtp://127.0.0.1:1",
+    } as never);
+    const prodCookie = prodOptions.cookies!.sessionToken!;
+    expect(prodCookie.name).toBe("__Secure-next-auth.session-token");
+    expect(prodCookie.options.secure).toBe(true);
+    expect(prodCookie.options.httpOnly).toBe(true);
+    expect(prodCookie.options.sameSite).toBe("lax");
+
+    // Adapter-level single use: consuming a verification token deletes the
+    // row, so a second use of the same link finds nothing (next-auth then
+    // rejects the callback). Expired rows are rejected by next-auth's expiry
+    // check against the same row.
+    const adapter = PrismaAdapter(db);
+    await adapter.createVerificationToken!({
+      identifier: "single-use@test.example",
+      token: "hashed-token-value",
+      expires: new Date(Date.now() + 60_000),
+    });
+    const consumed = await adapter.useVerificationToken!({
+      identifier: "single-use@test.example",
+      token: "hashed-token-value",
+    });
+    expect(consumed).not.toBeNull();
+    const second = await adapter.useVerificationToken!({
+      identifier: "single-use@test.example",
+      token: "hashed-token-value",
+    });
+    expect(second).toBeNull();
+    await expect(
+      db.verificationToken.findUnique({
+        where: { identifier_token: { identifier: "single-use@test.example", token: "hashed-token-value" } },
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("no token in production logs: the production send path never prints the URL", async () => {
+    const prodLogs: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      prodLogs.push(args.map(String).join(" "));
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const prodOptions = makeAuthOptions({
+      ...(loadEnv() as never as Record<string, never>),
+      NODE_ENV: "production",
+      EMAIL_SERVER: "smtp://127.0.0.1:1",
+    } as never);
+    const emailProvider = prodOptions.providers.find((p) => (p as { id: string }).id === "email") as unknown as {
+      sendVerificationRequest(opts: { identifier: string; url: string; provider: unknown; expires: Date }): Promise<void>;
+    };
+    const secretUrl = "http://localhost:3000/api/auth/callback/email?token=TOPSECRET-TOKEN&email=a@b.c";
+    await expect(
+      emailProvider.sendVerificationRequest({ identifier: "a@b.c", url: secretUrl, provider: {}, expires: future(1000) }),
+    ).rejects.toThrow();
+    expect(prodLogs.join("\n")).not.toContain("TOPSECRET-TOKEN");
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("first-admin bootstrap: INITIAL_ADMIN_EMAIL becomes ADMIN on first sign-in, audit entry written", async () => {
+    const env = loadEnv();
+    const options = makeAuthOptions({
+      ...(env as never as Record<string, never>),
+      INITIAL_ADMIN_EMAIL: "boss@test.example",
+    } as never);
+
+    // The user row exists (adapter created it during verification).
+    const user = await db.user.create({ data: { email: "boss@test.example" } });
+    const event = (options.events as { signIn?: (m: { user: { id: string | null; email: string | null } }) => Promise<void> }).signIn;
+    await event!({ user: { id: user.id, email: user.email } });
+
+    const promoted = await db.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(promoted.role).toBe("ADMIN");
+    const auditRows = await db.auditLog.findMany({ where: { action: "auth.initial_admin_bootstrap" } });
+    expect(auditRows).toHaveLength(1);
+
+    // A second sign-in must NOT re-audit (bootstrap happened once).
+    await event!({ user: { id: user.id, email: user.email } });
+    const rows = await db.auditLog.findMany({ where: { action: "auth.initial_admin_bootstrap" } });
+    expect(rows).toHaveLength(1);
+
+    // Another user with the same email cannot bootstrap twice — but a second
+    // admin candidate does nothing while an ADMIN exists.
+    const second = await db.user.create({ data: { email: "boss2@test.example" } });
+    await event!({ user: { id: second.id, email: "BOSS@test.example" } });
+    expect((await db.user.findUniqueOrThrow({ where: { id: second.id } })).role).toBe("LISTENER");
+  });
+
+  it("authorization matrix: every discovered route is listed and answers as declared", async () => {
+    const matrix = JSON.parse(readFileSync("tests/authz-matrix.json", "utf8")) as MatrixFile;
+    const actors = matrix.actors;
+
+    // Discover every route.ts under src/app/api.
+    const discovered: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/^route\.(ts|tsx)$/.test(e.name)) {
+          const rel = relative(join("src", "app", "api"), dirname(p)).split(sep).filter(Boolean);
+          const key =
+            "/api" +
+            (rel.length
+              ? "/" + rel.map((s) => s.replace(/^\[\.\.\.(.+)\]$/, ":$1*").replace(/^\[(.+)\]$/, ":$1")).join("/")
+              : "");
+          discovered.push(key);
+        }
+      }
+    };
+    walk(join("src", "app", "api"));
+    discovered.sort();
+
+    // Every discovered route must be in the matrix.
+    const unknown = discovered.filter((k) => !(k in matrix.routes));
+    expect(unknown, `routes missing from tests/authz-matrix.json: ${unknown.join(", ")}`).toEqual([]);
+
+    // Session fixtures per actor.
+    const tokens: Record<string, string | null> = { anonymous: null };
+    for (const role of ["LISTENER", "ARTIST", "MODERATOR", "ADMIN"] as const) {
+      const { user, session } = await createUserWithSession(role);
+      tokens[role] = session.sessionToken;
+      void user;
+    }
+    const banned = await createUserWithSession("LISTENER", { banned: true });
+    tokens.banned = banned.session.sessionToken;
+
+    for (const key of discovered) {
+      const entry = matrix.routes[key as keyof typeof matrix.routes];
+      if (entry.skipCall) continue; // public-by-design; flows tested separately
+
+      const mod = await import(`@/app${key === "/api" ? "" : key.replace(":nextauth*", "[...nextauth]")}/route`);
+      const handler = mod[entry.method];
+      expect(handler, `${entry.method} export missing for ${key}`).toBeTruthy();
+
+      for (const actor of actors) {
+        const req = new Request(`http://localhost:3000${key.replace(/:\w+\*/, "x")}`, {
+          method: entry.method,
+          headers: tokens[actor] ? { cookie: `${SESSION_COOKIE}=${tokens[actor]}` } : {},
+        });
+        const res = await handler(req, { params: Promise.resolve({}) });
+        expect(res.status, `${entry.method} ${key} as ${actor}`).toBe(
+          entry.expected[actor as keyof typeof entry.expected],
+        );
+      }
+    }
   });
 });
