@@ -12,7 +12,8 @@
     "worker": "bun src/worker/index.ts",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "db:seed": "bun prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
@@ -34,5 +35,8 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.2",
     "vitest": "^5.0.3"
+  },
+  "prisma": {
+    "seed": "bun prisma/seed.ts"
   }
 }
