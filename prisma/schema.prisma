@@ -488,3 +488,12 @@ model BudgetLedger {
 
   @@id([day, provider])
 }
+
+// Fixed-window rate limiter buckets (H-103). One row per (key, window).
+model RateLimitBucket {
+  key         String
+  windowStart DateTime
+  count       Int
+
+  @@id([key, windowStart])
+}
