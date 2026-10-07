@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { cleanTables, databaseUrl, makeClient, skipMessage } from "./helpers";
 import { seed } from "../../prisma/seed";
+import { purgeExpiredBuckets, rateLimit } from "@/server/ratelimit";
 
 // DB integration tests (H-101), single file so the suites never run in
 // parallel workers: every suite TRUNCATEs the shared tables in beforeEach and
@@ -206,5 +207,50 @@ describe.skipIf(!databaseUrl)("seed (H-101)", () => {
     await seed(db);
     await expect(db.user.count()).resolves.toBe(0);
     await expect(db.track.count()).resolves.toBe(0);
+  });
+});
+
+describe.skipIf(!databaseUrl)("rate limiter (H-103)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    await cleanTables(db);
+  });
+
+  it("admits exactly `limit` requests under 50 concurrent calls", async () => {
+    const limit = 5;
+    const verdicts = await Promise.all(
+      Array.from({ length: 50 }, () => rateLimit({ key: "test:burst", limit, windowSec: 60 })),
+    );
+    expect(verdicts.filter((v) => v.ok)).toHaveLength(limit);
+    for (const v of verdicts) expect(v.retryAfterSec).toBeGreaterThan(0);
+  });
+
+  it("rejects within the window once the limit is reached", async () => {
+    const first = await rateLimit({ key: "test:cap", limit: 2, windowSec: 60 });
+    const second = await rateLimit({ key: "test:cap", limit: 2, windowSec: 60 });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    const third = await rateLimit({ key: "test:cap", limit: 2, windowSec: 60 });
+    expect(third.ok).toBe(false);
+    expect(third.remaining).toBe(0);
+  });
+
+  it("admits again after the window rolls over", async () => {
+    const first = await rateLimit({ key: "test:roll", limit: 1, windowSec: 1 });
+    expect(first.ok).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const second = await rateLimit({ key: "test:roll", limit: 1, windowSec: 1 });
+    expect(second.ok).toBe(true);
+  });
+
+  it("purgeExpiredBuckets removes only buckets whose window fully passed", async () => {
+    await rateLimit({ key: "test:purge", limit: 10, windowSec: 60 });
+    // The active window is still open one minute back? No — the bucket's
+    // windowStart is within the current 60 s window, so a cutoff one minute
+    // in the past keeps it.
+    expect(await purgeExpiredBuckets(new Date(Date.now() - 61_000))).toBe(0);
+    // A cutoff beyond the active window removes it.
+    expect(await purgeExpiredBuckets(new Date(Date.now() + 60_000))).toBe(1);
   });
 });
