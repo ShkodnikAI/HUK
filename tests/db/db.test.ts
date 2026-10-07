@@ -696,6 +696,124 @@ describe.skipIf(!databaseUrl)("auth guard, matrix and magic-link flows (H-102)",
     expect(otherRes.status).toBe(200);
   });
 
+  it("magic link is built on NEXTAUTH_URL through the real Auth.js handler (H-110 F1)", async () => {
+    const prevUrl = process.env.NEXTAUTH_URL;
+    process.env.NEXTAUTH_URL = "https://example.test";
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+    try {
+      // The real NextAuth handler (pages-router entry of the very same
+      // NextAuth(options) the App Router route wraps; the route glue itself
+      // needs a live Next request scope, so the test drives req/res directly).
+      const NextAuth = (await import("next-auth")).default;
+      const handler = NextAuth(makeAuthOptions(loadEnv())) as unknown as (
+        req: unknown,
+        res: unknown,
+      ) => Promise<void>;
+
+      const makeRes = () => {
+        const record: {
+          headers: Record<string, unknown>;
+          send?: unknown;
+          json?: unknown;
+        } = { headers: {} };
+        const res = {
+          status() {
+            return res;
+          },
+          setHeader(k: string, v: unknown) {
+            record.headers[k] = v;
+            return res;
+          },
+          getHeader(k: string) {
+            return record.headers[k];
+          },
+          end() {},
+          json(b: unknown) {
+            record.json = b;
+            return res;
+          },
+          send(b: unknown) {
+            record.send = b;
+            return res;
+          },
+        };
+        return { res, record };
+      };
+
+      // Step 1: the real CSRF handshake (GET /api/auth/csrf issues the token
+      // and the __Secure-next-auth.csrf-token cookie, because NEXTAUTH_URL
+      // is https://example.test here).
+      const step1 = makeRes();
+      await handler(
+        { method: "GET", url: "/api/auth/csrf", headers: {}, cookies: {}, query: { nextauth: ["csrf"] } },
+        step1.res,
+      );
+      const csrfBody = (step1.record.json ?? step1.record.send) as { csrfToken: string };
+      expect(csrfBody.csrfToken).toBeTruthy();
+      const setCookies = step1.record.headers["Set-Cookie"] as string[];
+      const csrfCookieLine = setCookies.find((c) => c.includes("csrf-token"));
+      expect(csrfCookieLine).toBeTruthy();
+      const pair = csrfCookieLine!.split(";")[0];
+      const eq = pair.indexOf("=");
+      const csrfCookieName = pair.slice(0, eq);
+      const csrfCookieValue = decodeURIComponent(pair.slice(eq + 1));
+
+      // Step 2: the real sign-in POST (dev path prints the magic link).
+      const step2 = makeRes();
+      await handler(
+        {
+          method: "POST",
+          url: "/api/auth/signin/email",
+          headers: {},
+          cookies: { [csrfCookieName]: csrfCookieValue },
+          query: { nextauth: ["signin", "email"] },
+          body: { email: "magic-link@test.example", csrfToken: csrfBody.csrfToken },
+        },
+        step2.res,
+      );
+
+      // With only AUTH_URL-style env next-auth v4 would fall back to
+      // http://localhost:3000; the link must instead carry the NEXTAUTH_URL host.
+      const link = logs.find((l) => l.includes("callback/email"));
+      expect(link, "dev path must print the magic link").toBeTruthy();
+      expect(link!).toContain("https://example.test/api/auth/callback/email?");
+      expect(link!).not.toContain("http://localhost:3000");
+    } finally {
+      logSpy.mockRestore();
+      if (prevUrl === undefined) delete process.env.NEXTAUTH_URL;
+      else process.env.NEXTAUTH_URL = prevUrl;
+    }
+  });
+
+  it("limiter parity: normalization variants share one per-email bucket (H-110 F2)", async () => {
+    const env = loadEnv();
+    const variants = [
+      "parity@test.example", // canonical
+      "Parity@Test.Example", // case folding
+      "parity@test.example,x", // domain cut at the first comma
+      "  parity@test.example  ", // trim
+      "\uFF30\uFF41\uFF52\uFF49\uFF54\uFF59@test.example", // NFKC fold
+    ];
+    let last: Response | null = null;
+    for (let i = 0; i < variants.length + 1; i++) {
+      const email = i < variants.length ? variants[i] : "parity@test.example";
+      const form = new FormData();
+      form.set("email", email);
+      form.set("csrfToken", "ignored-here");
+      const req = new NextRequest("http://localhost:3000/api/auth/signin/email", {
+        method: "POST",
+        body: form,
+      });
+      last = await withSignInRateLimit(req, env, () => Promise.resolve(Response.json({ ok: true })));
+      if (i < variants.length) expect(last.status, `variant ${i}`).toBe(200);
+    }
+    // 5 distinct spellings = 5 consumed units; the canonical 6th is limited.
+    expect(last!.status).toBe(429);
+  });
+
   it("auth cookies: httpOnly + sameSite=lax, secure only in production; adapter tokens are single-use", async () => {
     const devOptions = makeAuthOptions(loadEnv());
     const devCookie = devOptions.cookies!.sessionToken!;

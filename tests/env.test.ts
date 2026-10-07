@@ -9,7 +9,7 @@ const base = {
 describe("loadEnv (S8)", () => {
   it("accepts a minimal valid environment and applies defaults", () => {
     const env = loadEnv(base);
-    expect(env.AUTH_URL).toBe("http://localhost:3000");
+    expect(env.NEXTAUTH_URL).toBe("http://localhost:3000");
     expect(env.INVITE_ONLY).toBe(true);
     expect(env.BUDGET_DAILY_MICRO_USD_TOTAL).toBe(1_000_000);
     expect(env.PLATFORM_DAILY_SUBMISSION_CAP).toBe(10);
@@ -36,5 +36,30 @@ describe("loadEnv (S8)", () => {
   it("parses INVITE_ONLY=false as boolean false", () => {
     const env = loadEnv({ ...base, INVITE_ONLY: "false" });
     expect(env.INVITE_ONLY).toBe(false);
+  });
+
+  it("refuses to start in production with a non-https NEXTAUTH_URL (H-110 F1)", () => {
+    expect(() =>
+      loadEnv({
+        ...base,
+        NODE_ENV: "production",
+        IP_HASH_SALT: "test-only fixture value, not a credential",
+        CLIENT_IP_HEADER: "cf-connecting-ip",
+        EMAIL_SERVER: "smtp://user:pass@localhost:1025",
+        NEXTAUTH_URL: "http://insecure.example",
+      }),
+    ).toThrow(/NEXTAUTH_URL/);
+  });
+
+  it("accepts an https NEXTAUTH_URL in production (H-110 F1)", () => {
+    const env = loadEnv({
+      ...base,
+      NODE_ENV: "production",
+      IP_HASH_SALT: "test-only fixture value, not a credential",
+      CLIENT_IP_HEADER: "cf-connecting-ip",
+      EMAIL_SERVER: "smtp://user:pass@localhost:1025",
+      NEXTAUTH_URL: "https://radio.example",
+    });
+    expect(env.NEXTAUTH_URL).toBe("https://radio.example");
   });
 });

@@ -176,6 +176,7 @@ describe("production env requirements (H-103)", () => {
     const env = loadEnv({
       ...base,
       NODE_ENV: "production",
+      NEXTAUTH_URL: "https://radio.example",
       IP_HASH_SALT: "test-only fixture value, not a credential",
       CLIENT_IP_HEADER: "cf-connecting-ip",
       EMAIL_SERVER: "smtp://user:pass@localhost:1025",
@@ -188,6 +189,7 @@ describe("production env requirements (H-103)", () => {
       loadEnv({
         ...base,
         NODE_ENV: "production",
+        NEXTAUTH_URL: "https://radio.example",
         IP_HASH_SALT: "test-only fixture value, not a credential",
         CLIENT_IP_HEADER: "cf-connecting-ip",
       }),

@@ -29,7 +29,16 @@ export async function withSignInRateLimit(
   } catch {
     email = null;
   }
-  if (email !== null) email = normalizeEmail(email);
+  if (email !== null) {
+    // H-110 (F2): the normalizer is Auth.js-exact and throws on input Auth.js
+    // would reject. Nothing gets mailed for such input, so the per-email
+    // limiter key is skipped; the per-IP limit still applies.
+    try {
+      email = normalizeEmail(email);
+    } catch {
+      email = null;
+    }
+  }
 
   const ip = clientIp(req, env);
   const now = new Date();

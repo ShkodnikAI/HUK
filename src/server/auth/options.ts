@@ -20,9 +20,25 @@ export const SIGNIN_LIMITS = {
   perEmail: { limit: 5, windowSec: 60 * 60 },
 } as const;
 
-/** Normalizes an email before lookup/limiting/hash (H-102). */
-export function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
+/**
+ * Normalizes an email EXACTLY like Auth.js v4 does before sending a magic
+ * link (node_modules/next-auth/core/routes/signin.js): NFKC, trim, exactly
+ * one "@", no quote character, lowercase, domain cut at the first comma,
+ * domain must contain a dot. H-110 (F2): this is also given to the Email
+ * provider as its explicit `normalizeIdentifier` and used for the per-email
+ * limiter keys, so the counter and the address actually mailed can never
+ * diverge. Throws on input Auth.js itself would reject.
+ */
+export function normalizeEmail(identifier: string): string {
+  const trimmedEmail = identifier.normalize("NFKC").trim();
+  const atCount = (trimmedEmail.match(/@/g) ?? []).length;
+  if (atCount !== 1) throw new Error("Invalid email address format.");
+  if (trimmedEmail.includes('"')) throw new Error("Invalid email address format.");
+  let [local, domain] = trimmedEmail.toLowerCase().split("@");
+  if (!local || !domain) throw new Error("Invalid email address format.");
+  domain = domain.split(",")[0];
+  if (!domain.includes(".")) throw new Error("Invalid email address format.");
+  return `${local}@${domain}`;
 }
 
 function isProd(env: Env): boolean {
@@ -45,6 +61,10 @@ export function makeAuthOptions(
       EmailProvider({
         server: env.EMAIL_SERVER ?? "",
         from: env.EMAIL_FROM,
+        // F2 (H-110): pin the normalization to OUR replica of the Auth.js
+        // default so the limiter keys and the mailed address are derived by
+        // the very same function (parity by construction).
+        normalizeIdentifier: normalizeEmail,
         async sendVerificationRequest({ identifier, url }) {
           const email = normalizeEmail(identifier);
           if (isProd(env)) {

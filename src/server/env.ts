@@ -11,7 +11,11 @@ const schema = z.object({
   AUTH_SECRET: z
     .string()
     .min(32, "AUTH_SECRET must be at least 32 chars (generate: openssl rand -base64 32)"),
-  AUTH_URL: z.url().default("http://localhost:3000"),
+  // Base URL for Auth.js magic links (H-110, F1): next-auth v4 reads it ONLY
+  // from NEXTAUTH_URL (node_modules/next-auth/utils/detect-origin.js). Keep
+  // AUTH_TRUST_HOST unset — deriving the origin from forwarded headers would
+  // allow link poisoning.
+  NEXTAUTH_URL: z.url().default("http://localhost:3000"),
   // Next.js sets NODE_ENV itself; validated so production requirements below
   // can key off it (H-103).
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -76,6 +80,17 @@ export function loadEnv(
       `Invalid environment (S8), refusing to start:\n${missing
         .map((k) => `  - ${k}: required in production (H-103)`)
         .join("\n")}`,
+    );
+  }
+
+  // F1 (H-110): magic links must never point at http://localhost:3000 in
+  // production — the base URL has to be a real https origin (S8, fail loud).
+  if (
+    parsed.data.NODE_ENV === "production" &&
+    !parsed.data.NEXTAUTH_URL.startsWith("https://")
+  ) {
+    throw new Error(
+      `Invalid environment (S8), refusing to start:\n  - NEXTAUTH_URL: must be an https:// URL in production (H-110)`,
     );
   }
 
