@@ -42,6 +42,8 @@ export async function radioNow(
       LEFT JOIN "ArtistProfile" a ON a."id" = t."artistId"
       LEFT JOIN "TrackSource" ts  ON ts."trackId" = t."id"
      WHERE s."endsAt" > ${now}
+       AND t."status" = 'APPROVED'   -- F3 (H-110, S2): never serve slots
+       AND t."available" = true      -- whose track is not public right now
      ORDER BY s."startsAt" ASC
      LIMIT ${NEXT_LIMIT + 2}
   `;

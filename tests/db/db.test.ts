@@ -447,6 +447,49 @@ describe.skipIf(!databaseUrl)("broadcast scheduler + /api/radio/now (H-104)", ()
     expect(result.next).toEqual([]);
   });
 
+  it("/now omits slots of non-approved or unavailable tracks (H-110 F3, S2), at most 2 queries", async () => {
+    const nowMs = Date.now();
+    const mk = async (title: string, status: string, available: boolean) => {
+      const track = await db.track.create({ data: { title, status: status as never, available, durationSec: 60 } });
+      await db.trackSource.create({
+        data: { trackId: track.id, provider: "SEED", url: `https://example.com/${title}.mp3` },
+      });
+      return track.id;
+    };
+    const good = await mk("good", "APPROVED", true);
+    const pending = await mk("pending-track", "PENDING", true);
+    const gone = await mk("gone", "APPROVED", false);
+
+    await db.broadcastSlot.createMany({
+      data: [
+        { seq: 1n, trackId: pending, startsAt: new Date(nowMs - 10_000), endsAt: new Date(nowMs + 10_000) },
+        { seq: 2n, trackId: gone, startsAt: new Date(nowMs + 10_000), endsAt: new Date(nowMs + 30_000) },
+        { seq: 3n, trackId: good, startsAt: new Date(nowMs + 30_000), endsAt: new Date(nowMs + 50_000) },
+      ],
+    });
+
+    let queries = 0;
+    const countingClient = {
+      $queryRaw: (...args: unknown[]) => {
+        queries++;
+        return (db.$queryRaw as (...a: unknown[]) => unknown)(...args);
+      },
+    };
+    const result = await radioNow(nowMs, countingClient as never);
+
+    // Only the APPROVED + available track is served (current and next).
+    const servedIds = [
+      ...(result.current ? [result.current.track.id] : []),
+      ...result.next.map((s) => s.track.id),
+    ];
+    expect(servedIds).toEqual([good]);
+    expect(servedIds).not.toContain(pending);
+    expect(servedIds).not.toContain(gone);
+
+    // The read stays a pure read: at most 2 queries (F3 done criteria).
+    expect(queries).toBeLessThanOrEqual(2);
+  });
+
   it("never schedules non-APPROVED or unavailable tracks (S2)", async () => {
     await seedLibrary(5);
     await db.track.create({ data: { title: "draft", status: "DRAFT", available: true, durationSec: 60 } });
