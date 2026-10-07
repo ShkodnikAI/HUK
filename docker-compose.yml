@@ -25,6 +25,7 @@ services:
     build:
       context: .
       target: web
+    user: "0"   # PROBE (H-111 done criteria): must turn docker-smoke red
     environment:
       DATABASE_URL: postgresql://huk:huk@postgres:5432/huk
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env (openssl rand -base64 32)}
