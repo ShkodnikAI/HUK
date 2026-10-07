@@ -1073,9 +1073,18 @@ describe.skipIf(!databaseUrl)("auth guard, matrix and magic-link flows (H-102)",
       expect(handler, `${entry.method} export missing for ${key}`).toBeTruthy();
 
       for (const actor of actors) {
+        // H-110 F12: mutating requests need a same-origin header — the
+        // harness sends the platform origin for every non-GET call.
+        const mutationHeaders: Record<string, string> =
+          entry.method === "GET" || entry.method === "HEAD"
+            ? {}
+            : { origin: "http://localhost:3000" };
         const req = new Request(`http://localhost:3000${key.replace(/:\w+\*/, "x")}`, {
           method: entry.method,
-          headers: tokens[actor] ? { cookie: `${SESSION_COOKIE}=${tokens[actor]}` } : {},
+          headers: {
+            ...(tokens[actor] ? { cookie: `${SESSION_COOKIE}=${tokens[actor]}` } : {}),
+            ...mutationHeaders,
+          },
         });
         const res = await handler(req, { params: Promise.resolve({}) });
         expect(res.status, `${entry.method} ${key} as ${actor}`).toBe(
@@ -1350,5 +1359,264 @@ describe.skipIf(!databaseUrl)("maintenance runner (H-210)", () => {
     await runner.stop();
     expect(calls).toBeGreaterThanOrEqual(2); // it retried after the failure
     errorSpy.mockRestore();
+  });
+});
+
+describe.skipIf(!databaseUrl)("artist invites and onboarding (H-209)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    process.env.NEXTAUTH_URL ??= "http://localhost:3000";
+    process.env.INVITE_ONLY = "true";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  const future = (ms: number) => new Date(Date.now() + ms);
+  const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+
+  async function user(role: string) {
+    return db.user.create({
+      data: { email: `${role.toLowerCase()}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.example`, role: role as never },
+    });
+  }
+
+  async function post(path: string, body: unknown, actor?: { user: { id: string } }) {
+    const { POST } = await import(`@/app${path}/route`);
+    const req = new Request(`http://localhost:3000${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost:3000",
+        ...(actor ? { cookie: `${SESSION_COOKIE}=tok-${actor.user.id}` } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    // Sessions for the guard are created directly (tok-<userId>), see below.
+    return POST(req, { params: Promise.resolve({}) });
+  }
+
+  async function createSession(userId: string) {
+    await db.session.create({
+      data: { userId, sessionToken: `tok-${userId}`, expires: future(24 * 60 * 60 * 1000) },
+    });
+  }
+
+  /** Greps every text-ish column of every table for the needle. */
+  async function dbGrepCount(needle: string): Promise<number> {
+    const columns = await db.$queryRawUnsafe<Array<{ table_name: string; column_name: string }>>(
+      `SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND data_type IN ('text', 'character varying', 'json', 'jsonb')`,
+    );
+    let hits = 0;
+    for (const { table_name, column_name } of columns) {
+      const res = await db.$queryRawUnsafe<Array<{ n: bigint }>>(
+        `SELECT COUNT(*) AS n FROM "${table_name}" WHERE "${column_name}"::text LIKE ${"'" + "%" + needle + "%" + "'"}::text`,
+      );
+      hits += Number(res[0]?.n ?? 0);
+    }
+    return hits;
+  }
+
+  it("admin creates invites: plain codes shown once, only hashes stored, nothing in logs or the database", async () => {
+    const admin = await user("ADMIN");
+    await createSession(admin.id);
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
+      logs.push(a.map(String).join(" "));
+    });
+    let res: Response;
+    try {
+      res = await post("/api/admin/invites", { count: 3, note: "beta wave 1" }, { user: admin });
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { invites: Array<{ id: string; code: string; expiresAt: string }> };
+    expect(body.invites).toHaveLength(3);
+    for (const inv of body.invites) {
+      expect(inv.code).toMatch(/^[A-Za-z0-9_-]{20,40}$/);
+      // The stored hash is the sha-256 of the plain code — never the code.
+      const row = await db.artistInvite.findUniqueOrThrow({ where: { id: inv.id } });
+      expect(row.codeHash).toBe(sha256(inv.code));
+      expect(row.codeHash).not.toBe(inv.code);
+      expect(row.expiresAt.getTime()).toBeGreaterThan(Date.now() + 13 * 24 * 60 * 60 * 1000);
+      // The plain code must appear nowhere in the database…
+      expect(await dbGrepCount(inv.code)).toBe(0);
+      // …nor in any log line.
+      expect(logs.join("\n")).not.toContain(inv.code);
+    }
+    const auditRows = await db.auditLog.findMany({ where: { action: "invites.created" } });
+    expect(auditRows).toHaveLength(1);
+    expect(JSON.stringify(auditRows[0].payload)).not.toContain(body.invites[0].code);
+  });
+
+  it("admin/invites requires the ADMIN role", async () => {
+    const listener = await user("LISTENER");
+    await createSession(listener.id);
+    const res = await post("/api/admin/invites", { count: 1 }, { user: listener });
+    expect(res.status).toBe(403);
+  });
+
+  it("redeem: a valid code creates the profile, grants ARTIST, marks the invite used, and audits", async () => {
+    const admin = await user("ADMIN");
+    const listener = await user("LISTENER");
+    await createSession(admin.id);
+    await createSession(listener.id);
+    const invites = await post("/api/admin/invites", { count: 1 }, { user: admin });
+    const { invites: [invite] } = (await invites.json()) as never as { invites: Array<{ code: string }> };
+
+    const res = await post(
+      "/api/invites/redeem",
+      { code: invite.code, handle: "great-artist", displayName: "Great Artist" },
+      { user: listener },
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { profile: { id: string; handle: string } };
+    expect(body.profile.handle).toBe("great-artist");
+
+    const profile = await db.artistProfile.findUniqueOrThrow({ where: { userId: listener.id } });
+    expect(profile.displayName).toBe("Great Artist");
+    const refreshed = await db.user.findUniqueOrThrow({ where: { id: listener.id } });
+    expect(refreshed.role).toBe("ARTIST");
+    const inviteRow = await db.artistInvite.findFirstOrThrow({ where: { codeHash: sha256(invite.code) } });
+    expect(inviteRow.usedById).toBe(listener.id);
+    expect(inviteRow.usedAt).not.toBeNull();
+    const audits = await db.auditLog.findMany({ where: { action: { in: ["invites.created", "invites.redeemed"] } } });
+    expect(audits).toHaveLength(2);
+  });
+
+  it("reuse, expiry and malformed codes are indistinguishable (same status, same body shape)", async () => {
+    const admin = await user("ADMIN");
+    await createSession(admin.id);
+    const listeners = [await user("LISTENER"), await user("LISTENER"), await user("LISTENER")];
+    for (const l of listeners) await createSession(l.id);
+    const { invites: [invite] } = (await (await post("/api/admin/invites", { count: 1 }, { user: admin })).json()) as never as { invites: Array<{ code: string }> };
+
+    // First redemption succeeds; the same code is then reused.
+    const first = await post("/api/invites/redeem", { code: invite.code, handle: "first-user", displayName: "First" }, { user: listeners[0] });
+    expect(first.status).toBe(201);
+    const reused = await post("/api/invites/redeem", { code: invite.code, handle: "second-user", displayName: "Second" }, { user: listeners[1] });
+    // An expired-but-otherwise-valid code.
+    await db.artistInvite.create({
+      data: { codeHash: sha256("expired-code-value-000"), createdById: admin.id, expiresAt: new Date(Date.now() - 1000) },
+    });
+    const expired = await post("/api/invites/redeem", { code: "expired-code-value-000", handle: "third-user", displayName: "Third" }, { user: listeners[2] });
+    // A malformed code (by a user who has no profile yet — listeners[1]'s
+    // reuse attempt failed before any profile was created).
+    const malformed = await post("/api/invites/redeem", { code: "totally-unknown-code", handle: "fourth-user", displayName: "Fourth" }, { user: listeners[1] });
+
+    for (const res of [reused, expired, malformed]) {
+      expect(res.status).toBe(404);
+    }
+    const bodies = await Promise.all([reused.json(), expired.json(), malformed.json()]);
+    const shapes = bodies.map((b) => JSON.stringify(Object.keys((b as { error: { code: string } }).error).sort()) + (b as { error: { code: string } }).error.code);
+    expect(new Set(shapes).size).toBe(1);
+    expect((bodies[0] as { error: { code: string } }).error.code).toBe("NO_SUCH_INVITE");
+  });
+
+  it("the same code redeemed 10 times in parallel succeeds exactly once", async () => {
+    const admin = await user("ADMIN");
+    await createSession(admin.id);
+    const { invites: [invite] } = (await (await post("/api/admin/invites", { count: 1 }, { user: admin })).json()) as never as { invites: Array<{ code: string }> };
+    const users = await Promise.all(Array.from({ length: 10 }, () => user("LISTENER")));
+    await Promise.all(users.map((u) => createSession(u.id)));
+
+    const results = await Promise.all(
+      users.map((u) =>
+        post("/api/invites/redeem", { code: invite.code, handle: `racer-${u.id.slice(-6).toLowerCase()}`, displayName: "Racer" }, { user: u })
+          .then((r) => r.status),
+      ),
+    );
+    expect(results.filter((s) => s === 201)).toHaveLength(1);
+    expect(results.filter((s) => s === 404)).toHaveLength(9);
+    expect(await db.user.count({ where: { role: "ARTIST" } })).toBe(1);
+    expect(await db.artistInvite.count({ where: { usedById: { not: null } } })).toBe(1);
+  });
+
+  it("handle and display-name rules are enforced", async () => {
+    const admin = await user("ADMIN");
+    await createSession(admin.id);
+    const { invites: [i1, i2, i3, i4] } = (await (await post("/api/admin/invites", { count: 4 }, { user: admin })).json()) as never as { invites: Array<{ code: string }> };
+
+    // Fresh user per batch: redemption attempts count against a 5/hour
+    // per-user bucket (anti-bruteforce), so one user cannot try them all.
+    const attempt = (code: string, handle: string, displayName = "Name") => {
+      const listener = user("LISTENER");
+      return (async () => {
+        const u = await listener;
+        await createSession(u.id);
+        const res = await post("/api/invites/redeem", { code, handle, displayName }, { user: u });
+        return res.status;
+      })();
+    };
+
+    // Uppercase is not a valid handle (and therefore no case-variant can exist).
+    expect(await attempt(i1.code, "Great-Artist")).toBe(422);
+    // Too short / too long.
+    expect(await attempt(i1.code, "ab")).toBe(422);
+    expect(await attempt(i1.code, "a".repeat(31))).toBe(422);
+    // Reserved words.
+    expect(await attempt(i1.code, "admin")).toBe(422);
+    expect(await attempt(i1.code, "huk")).toBe(422);
+    expect(await attempt(i1.code, "support")).toBe(422);
+    // Control characters in the display name.
+    expect(await attempt(i2.code, "ok-handle", "Bad\u0000Name")).toBe(422);
+    expect(await attempt(i2.code, "ok-handle", "Bad\u200bName")).toBe(422);
+    // 61 characters of display name.
+    expect(await attempt(i2.code, "ok-handle", "n".repeat(61))).toBe(422);
+    // Any script is fine (Cyrillic, CJK, emoji) — a real redemption happens.
+    expect(await attempt(i3.code, "multi-script", "Музыкант 幻夢 🎸")).toBe(201);
+    void i4;
+  });
+
+  it("case-variant and exact duplicate handles are rejected; a second profile for a user is rejected", async () => {
+    const admin = await user("ADMIN");
+    await createSession(admin.id);
+    const [u1, u2] = [await user("LISTENER"), await user("LISTENER")];
+    await Promise.all([u1, u2].map((u) => createSession(u.id)));
+    const { invites: [i1, i2] } = (await (await post("/api/admin/invites", { count: 2 }, { user: admin })).json()) as never as { invites: Array<{ code: string }> };
+
+    expect((await post("/api/invites/redeem", { code: i1.code, handle: "taken-handle", displayName: "One" }, { user: u1 })).status).toBe(201);
+    // The same handle by another user: 409.
+    expect((await post("/api/invites/redeem", { code: i2.code, handle: "taken-handle", displayName: "Two" }, { user: u2 })).status).toBe(409);
+    // u2 already has... no: u2's redeem failed, so i2 is still unused. A user
+    // with a profile redeeming again gets 409 (profile exists).
+    expect((await post("/api/invites/redeem", { code: i2.code, handle: "other-handle", displayName: "One" }, { user: u1 })).status).toBe(409);
+  });
+
+  it("INVITE_ONLY=false opens POST /api/artists without a code (profile, no role grant)", async () => {
+    process.env.INVITE_ONLY = "false";
+    const listener = await user("LISTENER");
+    await createSession(listener.id);
+    const res = await post("/api/artists", { handle: "open-artist", displayName: "Open Artist" }, { user: listener });
+    expect(res.status).toBe(201);
+    const profile = await db.artistProfile.findUniqueOrThrow({ where: { userId: listener.id } });
+    expect(profile.handle).toBe("open-artist");
+    const role = (await db.user.findUniqueOrThrow({ where: { id: listener.id } })).role;
+    expect(role).toBe("LISTENER"); // the open path creates a profile, it does not grant ARTIST
+    const audits = await db.auditLog.findMany({ where: { action: "artists.created" } });
+    expect(audits).toHaveLength(1);
+    // A second profile for the same user: 409.
+    expect(
+      (await post("/api/artists", { handle: "open-artist-two", displayName: "Again" }, { user: listener })).status,
+    ).toBe(409);
+  });
+
+  it("redemption is rate-limited per user (5 attempts per hour)", async () => {
+    const admin = await user("ADMIN");
+    const listener = await user("LISTENER");
+    await createSession(listener.id);
+    let last: Response | null = null;
+    for (let i = 0; i < 6; i++) {
+      last = await post("/api/invites/redeem", { code: `wrong-code-${i}`, handle: "some-handle", displayName: "Some" }, { user: listener });
+      if (i < 5) expect(last!.status).toBe(404);
+    }
+    expect(last!.status).toBe(429);
+    expect(Number(last!.headers.get("retry-after"))).toBeGreaterThan(0);
   });
 });

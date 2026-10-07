@@ -36,6 +36,39 @@
         "ADMIN": 200,
         "banned": 200
       }
+    },
+    "/api/admin/invites": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 403,
+        "ARTIST": 403,
+        "MODERATOR": 403,
+        "ADMIN": 400,
+        "banned": 403
+      }
+    },
+    "/api/invites/redeem": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 400,
+        "ARTIST": 400,
+        "MODERATOR": 400,
+        "ADMIN": 400,
+        "banned": 403
+      }
+    },
+    "/api/artists": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 403,
+        "ARTIST": 403,
+        "MODERATOR": 403,
+        "ADMIN": 403,
+        "banned": 403
+      }
     }
   }
 }
