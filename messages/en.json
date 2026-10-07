@@ -1,0 +1,20 @@
+{
+  "home": {
+    "tagline": "Free, non-commercial, international 24/7 radio for music that authors publish themselves.",
+    "status": "pre-alpha scaffold — the player ships with H-105, charts and submissions arrive in later naryads",
+    "brand": "HUK"
+  },
+  "player": {
+    "modeRadio": "Radio",
+    "modePlaylist": "My playlist",
+    "comingSoon": "coming soon",
+    "play": "Play",
+    "pause": "Pause",
+    "nowPlaying": "Now playing",
+    "standby": "Standby — the station is silent right now",
+    "modePlaylistStub": "My playlist (coming soon)"
+  },
+  "language": {
+    "label": "Language"
+  }
+}
