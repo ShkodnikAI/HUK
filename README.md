@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/brand/huk-banner.jpg" alt="HUK wordmark: the letter H carries an audio waveform as its crossbar" width="720">
+  <img src="docs/assets/brand/huk-banner.svg" alt="HUK wordmark: the letter H carries an audio waveform as its crossbar" width="720">
 </p>
 
 # HUK
