@@ -13,6 +13,14 @@ services:
       timeout: 5s
       retries: 10
 
+  # Local SMTP sink for magic links (dev/preview only): SMTP on 1025,
+  # web UI on 8025 — open http://localhost:8025 to read the mail.
+  mailpit:
+    image: axllent/mailpit:v1.31.4
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   web:
     build:
       context: .
@@ -20,7 +28,17 @@ services:
     environment:
       DATABASE_URL: postgresql://huk:huk@postgres:5432/huk
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env (openssl rand -base64 32)}
-      NEXTAUTH_URL: http://localhost:3000
+      # H-110: next-auth v4 reads ONLY NEXTAUTH_URL; keep AUTH_TRUST_HOST unset.
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      # Development defaults for the settings production requires (H-103, S8).
+      # They carry the repo-wide do-not-use-in-prod dev-salt naming and exist
+      # ONLY so a local `docker compose up` boots. A production deployment must
+      # set real values in its own environment and must not inherit these —
+      # overriding via .env/shell is the intended escape hatch.
+      IP_HASH_SALT: ${IP_HASH_SALT:-huk-dev-ip-hash-salt-do-not-use-in-prod}
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
+      # Magic links are sent to the local mailpit sink (read: :8025).
+      EMAIL_SERVER: ${EMAIL_SERVER:-smtp://mailpit:1025}
     ports:
       - "3000:3000"
     depends_on:
@@ -37,6 +55,10 @@ services:
     environment:
       DATABASE_URL: postgresql://huk:huk@postgres:5432/huk
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env (openssl rand -base64 32)}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      IP_HASH_SALT: ${IP_HASH_SALT:-huk-dev-ip-hash-salt-do-not-use-in-prod}
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
+      EMAIL_SERVER: ${EMAIL_SERVER:-smtp://mailpit:1025}
     depends_on:
       postgres:
         condition: service_healthy
