@@ -38,6 +38,22 @@ process (src/worker) · Docker Compose (`web`, `worker`, `postgres:16`) on one V
 The `web` and `worker` containers run as the non-root user `bun` (uid 1000, H-108).
 `next-intl` and Auth.js arrive with H-105/H-102 respectively.
 
+## Seed content
+
+The station ships with procedurally generated seed tracks (no copyright, no
+audio in git — `*.mp3` is ignored):
+
+```bash
+pip install -r scripts/seed-content/requirements.txt
+python3 scripts/seed-content/make_seed.py --out public/seed   # deterministic; byte-identical reruns
+bun run seed:tracks public/seed                               # registers them as SEED tracks (idempotent)
+```
+
+`make_seed.py` writes `manifest.json` next to the audio; `seed:tracks` measures
+duration with ffprobe (part of ffmpeg), computes sha256/size, and upserts the
+tracks (status `APPROVED`, provider `SEED`). Requires ffmpeg ≥ 4. Python 3.11+
+with `numpy`/`scipy`.
+
 ## Contributing
 Work happens through naryads: open an issue from the *Naryad* template that references a card in
 `docs/PLAN.md`, branch, open a PR, pass CI. See `AGENTS.md`.
