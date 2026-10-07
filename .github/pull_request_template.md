@@ -19,6 +19,8 @@ Closes #NNN  <!-- the PR body describes THIS naryad only -->
 ## Checklist
 - [ ] Scope respected (files outside the declared scope are listed here: ...)
 - [ ] All blocking jobs green on the merge commit
+- [ ] Every task of the naryad is listed in the report with its status (nothing silently dropped)
+- [ ] I merge this PR myself only because every required check is green on the merge commit
 - [ ] Every new/changed mutating route calls the guard or is in `scripts/ci/public-routes.txt` with a reason
 - [ ] No non-approved content can be served by any new path (S2)
 - [ ] Outbound HTTP only via `safe-fetch`; paid calls only via `budget.guard()` (S4, S6)

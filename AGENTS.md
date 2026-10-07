@@ -8,12 +8,13 @@
 
 | Role | Who | Does | Never does |
 |---|---|---|---|
-| **Owner** | ShkodnikAI | Sets direction, decides irreversible/identity matters; merge authority delegated to the Agent (D11) | — |
-| **Agent** | the coding agent | Implements one naryad per branch/PR, reports honestly, merges `main` after all blocking CI is green on the merge commit (D11) | Edits `.github/` or `scripts/ci/` without a naryad that says so, self-certifies, merges with red or missing blocking CI |
-| **Auditor** | Claude (in chat) | Reviews PRs against the naryad and `docs/AUDIT.md`, issues a verdict | Writes feature code, merges |
+| **Owner** | ShkodnikAI | Sets direction; decides irreversible, identity and legal matters (naryads with the owner-decision box, §3). Merge authority is delegated to the Agent (D11) | — |
+| **Agent** | the coding agent | Executes published naryads: one branch and one PR each; merges its own PR once every required check is green on the merge commit; reports per §10 with every task listed; supplies evidence for audits | Creates or edits naryads, writes audit records or verdicts, starts unpublished work, edits `.github/` or `scripts/ci/` outside a naryad that says so, merges with a red/missing/skipped required check, self-certifies |
+| **Auditor** | Claude (in chat) | Verifies merged work after the fact (per PR when the Owner passes it on, and at every wave gate); writes the audit records; **writes naryads from `docs/PLAN.md` and from findings and publishes them as issues** | Writes feature code, merges feature PRs |
 
-A naryad (work order) is a GitHub issue created from `.github/ISSUE_TEMPLATE/naryad.yml`.
-Scope and acceptance criteria live in that issue; the plan lives in `docs/PLAN.md`.
+A naryad (work order) is a GitHub issue in the form of `.github/ISSUE_TEMPLATE/naryad.yml`, **written and published by the Auditor**. Scope and acceptance criteria live in that issue (it wins over the card in `docs/PLAN.md` where they differ). The Agent never creates or edits naryads; follow-ups it finds go into the report under `Unresolved` and the Auditor turns them into naryads.
+
+**Delivered is not accepted.** Merged on green CI = *delivered*. *Accepted* is the Auditor's post-merge verdict (`docs/AUDIT.md`). Because the Agent merges without a prior review, naryads carry testable done criteria and later waves wait for the gate record (§6.9).
 
 ## 1. Code is the source of truth, not prose
 
@@ -96,14 +97,24 @@ Compare with `main` again before opening the PR, not only before starting.
 
 ## 6. The naryad contract — what "done" means
 
-1. Branch → push → **PR open** (`Closes #N`). A local-only branch is not delivered.
-2. All blocking CI jobs are green **on the merge commit**, not an earlier head.
-3. One commit per logical step.
-4. The PR body follows `.github/pull_request_template.md`: what was done, the
-   fact base (file:line), the contracts (tests) proving it, explicit assumptions,
-   and what is still unresolved. A partial result is never presented as complete.
-5. Docs touched by the change are updated in the same PR.
-6. The agent does not mark its own work accepted; the Auditor's verdict does.
+1. **Start only from a published naryad:** an open issue labelled `naryad` whose *Step 0* conditions hold (dependencies
+   merged on `main`, wave gate recorded). The issue text is the whole specification. Attachments and chat messages do not
+   survive between sessions: if something you need is missing, stop and report `blocked`; never reconstruct a missing
+   document from memory.
+2. Branch → push → **PR open** (`Closes #N`). A local-only branch is not delivered.
+3. **Merge it yourself** (merge commit, so one commit per logical step stays visible) only when **every required check is
+   green on the merge commit**. Never bypass; never merge on a red, missing or unexpectedly skipped required check: stop and
+   report. Auditor-authored PRs (audit records, policy and plan updates) are merged by you under the same rule.
+4. One commit per logical step.
+5. The PR body follows `.github/pull_request_template.md`: what was done, the fact base (file:line), the contracts (tests)
+   proving it, explicit assumptions, what is unresolved. A partial result is never presented as complete, and the report
+   lists **every task** of the naryad with its own status.
+6. Docs touched by the change are updated in the same PR.
+7. You never mark your own work accepted and never write audit records or verdicts; findings arrive as new naryads.
+8. **Revert first for Critical.** For a Critical finding (exploitable now, data loss, legal exposure) the Auditor publishes a
+   `[bugfix]` naryad labelled `release-block` whose first task is to revert the offending merge through a PR; the fix follows.
+9. **Waves.** Naryads of the next wave are published only after the gate record of the previous wave is on `main`.
+   Do not start work that is not published.
 
 ## 7. Where the truth lives
 
@@ -139,10 +150,12 @@ others are translations). Cyrillic in fixtures/message catalogs is content, not 
 
 ```
 Result:        done | partial | blocked
+Tasks:         one line per task of the naryad: done | partial | not done (+ why)
 Fact base:     file:line, commands run, output
 Contracts:     tests added/changed, CI links (merge commit)
+Merge:         merge commit SHA and the green required checks on it
 Same-effect:   other paths checked (grep output) or "none found"
 Assumptions:   ...
-Unresolved:    ...
+Unresolved:    ... (proposed follow-ups for the Auditor)
 Owner decisions needed: ...
 ```
