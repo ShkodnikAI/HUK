@@ -16,7 +16,13 @@
     "playbackFailed": "This track failed to play — waiting for the next one…",
     "like": "Like",
     "liked": "Liked",
-    "likeLocked": "Listen for 30 seconds before liking this track"
+    "likeLocked": "Listen for 30 seconds before liking this track",
+    "playlistPick": "Choose a playlist",
+    "previous": "Previous track",
+    "next": "Next track",
+    "playlistUnavailable": "(unavailable)",
+    "addToPlaylist": "Add to playlist",
+    "noPlaylists": "No playlists yet — create one via the API or import"
   },
   "language": {
     "label": "Language"
