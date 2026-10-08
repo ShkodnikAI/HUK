@@ -124,6 +124,19 @@ export async function moderateTrack(trackId: string, seam: OrchestratorSeam = {}
 
   const finish = async (decision: ModerationDecision["decision"]): Promise<ModerationDecision> => {
     await persistRuns();
+    // The human-queue marker is a separate row written AFTER the stage rows,
+    // so "latest run = HUMAN/REVIEW" is deterministic (task 4 of the naryad).
+    if (decision === "REVIEW") {
+      await client.moderationRun.create({
+        data: {
+          trackId,
+          stage: "HUMAN",
+          verdict: "REVIEW",
+          payload: sanitizePayload({ note: "awaiting human review", reasons }),
+          policyVersion: policy.version,
+        },
+      });
+    }
     const now = new Date();
     const aiPatch = {
       aiConfidence: decisionConfidence,
@@ -150,8 +163,8 @@ export async function moderateTrack(trackId: string, seam: OrchestratorSeam = {}
         payload: { reason: decisionSummary, confidence: decisionConfidence, policyVersion: policy.version },
       });
     } else {
-      // Track stays PENDING; the HUMAN/REVIEW run (written above when stages
-      // ran, or here for a gate-only path) marks it for the human queue.
+      // Track stays PENDING; the HUMAN/REVIEW row (created above) marks it
+      // for the human queue.
       await client.track.update({ where: { id: trackId }, data: { ...aiPatch } });
       await audit({
         actorKind: "worker",
@@ -164,11 +177,6 @@ export async function moderateTrack(trackId: string, seam: OrchestratorSeam = {}
     return { decision, reasons, summary: decisionSummary, confidence: decisionConfidence, policyVersion: policy.version };
   };
 
-  const finishWithHumanRow = async (note: Record<string, unknown>): Promise<ModerationDecision> => {
-    record("HUMAN", "REVIEW", { payload: note });
-    return finish("REVIEW");
-  };
-
   // ── 0. declaration gate ──────────────────────────────────────────────
   const missing: string[] = [];
   if (!track.rightsDeclaredAt) missing.push("rightsDeclaredAt");
@@ -178,7 +186,7 @@ export async function moderateTrack(trackId: string, seam: OrchestratorSeam = {}
   if (missing.length > 0) {
     record("DECLARATION", "REVIEW", { payload: { note: "declaration gate: required declarations missing", missing } });
     reasons.push(`declaration gate: missing ${missing.join(", ")}`);
-    return finishWithHumanRow({ note: "declaration gate failed", missing });
+    return finish("REVIEW");
   }
   record("DECLARATION", "PASS", { payload: { note: "declarations complete" } });
 
@@ -323,7 +331,7 @@ export async function moderateTrack(trackId: string, seam: OrchestratorSeam = {}
     // human so the pass never retries the same track forever; fail loud.
     console.error(`[moderation] unexpected error for track ${trackId}:`, e);
     reasons.push(`unexpected error: ${errMsg(e)}`);
-    return finishWithHumanRow({ note: "unexpected orchestrator error — track held for human review", error: errMsg(e) });
+    return finish("REVIEW");
   }
 }
 
@@ -363,7 +371,7 @@ export async function runModerationPass(
     if (eligible.length >= limit) break;
     const latest = await client.moderationRun.findFirst({
       where: { trackId: candidate.id },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       select: { stage: true },
     });
     if (latest?.stage === "HUMAN") continue; // awaiting a human decision

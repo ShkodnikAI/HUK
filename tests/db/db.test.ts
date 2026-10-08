@@ -2291,13 +2291,8 @@ describe.skipIf(!databaseUrl)("moderation pipeline (H-204)", () => {
       data: {
         trackId: track.id,
         provider: "DIRECT_URL",
-        url: "https://author-host.test/file.mp3",
-        portAllowlistNote: undefined,
-      } as never,
-    });
-    await db.trackSource.update({
-      where: { trackId: track.id },
-      data: { url: `https://author-host.test:${opts?.serverPort ?? 1}/file.mp3` },
+        url: `https://author-host.test:${opts?.serverPort ?? 1}/file.mp3`,
+      },
     });
     return track.id;
   }
@@ -2315,7 +2310,9 @@ describe.skipIf(!databaseUrl)("moderation pipeline (H-204)", () => {
   }
 
   async function runsFor(trackId: string) {
-    return db.moderationRun.findMany({ where: { trackId }, orderBy: { createdAt: "asc" } });
+    // id as the tie-break: rows written in one createMany share createdAt,
+    // and cuids generated sequentially sort lexicographically.
+    return db.moderationRun.findMany({ where: { trackId }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   }
 
   async function tmpDirs(): Promise<string[]> {
