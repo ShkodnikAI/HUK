@@ -12,7 +12,7 @@ import {
   shouldResyncOnVisibility,
   type ServerSlot,
 } from "@/lib/sync/clock";
-import type { RadioNowResponse } from "@/lib/radio/contract";
+import { applyRestrictions, type RadioNowResponse } from "@/lib/radio/contract";
 
 // The persistent radio player (H-105): one <audio> element mounted in the
 // root locale layout so it survives navigation. Polls /api/radio/now
@@ -32,15 +32,37 @@ export function RadioPlayer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const skewRef = useRef(0);
   const currentRef = useRef<ServerSlot | null>(null);
+  const countryRef = useRef<string | null | undefined>(undefined);
   const [mode, setMode] = useState<Mode>("radio");
   const [playing, setPlaying] = useState(false);
   const [nowTitle, setNowTitle] = useState<string | null>(null);
   const stoppedRef = useRef(false);
 
+  // H-206: the listener's country is fetched once (uncached /api/geo) and
+  // combined with the shared /now body client-side — the timeline stays
+  // identical for everyone (cache-safe) and the skip is per listener.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/geo", { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<{ country: string | null }>) : { country: null }))
+      .then((geo) => {
+        if (!cancelled) countryRef.current = geo.country;
+      })
+      .catch(() => {
+        if (!cancelled) countryRef.current = null; // header absent → never skip
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const applyTimeline = useCallback((data: RadioNowResponse) => {
     skewRef.current = computeSkew(data.serverTime, Date.now());
     const nowServer = serverNow(Date.now(), skewRef.current);
-    const current = data.current;
+    // H-206: a track restricted for this listener's country is skipped —
+    // standby instead of playback, polling continues.
+    const effective = applyRestrictions(data, countryRef.current);
+    const current = effective.current;
     currentRef.current = current ? { startsAt: current.startsAt, endsAt: current.endsAt } : null;
 
     const audio = audioRef.current;

@@ -24,6 +24,8 @@ import type { ModerationAdapters } from "@/server/moderation/types";
 import { MockFingerprintAdapter, type MockFingerprintConfig } from "@/server/moderation/adapters/fingerprint";
 import { MockAsrAdapter, type MockAsrConfig } from "@/server/moderation/adapters/asr";
 import { MockLlmAdapter, type MockLlmConfig } from "@/server/moderation/adapters/llm";
+import { createReport, listOpenReports, resolveReport, resolveSchema } from "@/server/reports/service";
+import { takedownTrack } from "@/server/tracks/takedown";
 import { resolveAudiusTrack } from "@/server/sources/audius";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -31,7 +33,7 @@ import { mkdtempSync, utimesSync, existsSync, statSync, rmSync } from "node:fs";
 import { route } from "@/server/http/handler";
 import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
 import { startMaintenance, type MaintenanceJob } from "@/server/maintenance/runner";
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient, User } from "@prisma/client";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
@@ -2651,5 +2653,235 @@ describe.skipIf(!databaseUrl || !hasFfmpeg)("technical stage against real ffmpeg
     const res = await technicalCheck(junk);
     expect(res.ok).toBe(false);
     expect(res.reason).toContain("ffprobe could not read");
+  });
+});
+
+// ───────────────────────── H-206: reports, takedown, restrictions ─────────────────────────
+
+describe.skipIf(!databaseUrl)("reports and takedown (H-206)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  function future(ms: number): Date {
+    return new Date(Date.now() + ms);
+  }
+
+  async function userWithSession(role: string): Promise<{ user: User; sessionToken: string }> {
+    const user = await db.user.create({
+      data: { email: `h206-${role.toLowerCase()}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.example`, role: role as never },
+    });
+    await db.session.create({
+      data: { userId: user.id, sessionToken: `tok-${user.id}`, expires: future(24 * 60 * 60 * 1000) },
+    });
+    return { user, sessionToken: `tok-${user.id}` };
+  }
+
+  async function approvedTrackWithSlots(): Promise<{ trackId: string }> {
+    const track = await db.track.create({ data: { title: "on air", status: "APPROVED", available: true, durationSec: 60 } });
+    await db.trackSource.create({ data: { trackId: track.id, provider: "SEED", url: "https://seed.test/a.mp3" } });
+    return { trackId: track.id };
+  }
+
+  it("createReport triages, deduplicates per reporter+target and audits", async () => {
+    const { trackId } = await approvedTrackWithSlots();
+    const first = await createReport({ targetType: "TRACK", targetId: trackId, reason: "this is a phishing scam", reporterContact: "a@b.example" }, null);
+    expect(first.deduped).toBe(false);
+    const report = await db.report.findUniqueOrThrow({ where: { id: first.reportId } });
+    expect(report.status).toBe("OPEN");
+    expect(report.category).toBe("FRAUD");
+    expect(report.urgency).toBe(2);
+    // Dedup: the same anonymous contact + target → the existing OPEN report.
+    const again = await createReport({ targetType: "TRACK", targetId: trackId, reason: "scam", reporterContact: "a@b.example" }, null);
+    expect(again.deduped).toBe(true);
+    expect(await db.report.count()).toBe(1);
+    // A different (real) reporter may report the same target.
+    const other = await db.user.create({ data: { email: `other-${Date.now()}@test.example` } });
+    const third = await createReport({ targetType: "TRACK", targetId: trackId, reason: "scam" }, other.id);
+    expect(third.deduped).toBe(false);
+    expect(await db.auditLog.count({ where: { action: "report.created" } })).toBe(2);
+  });
+
+  it("takedown through resolveReport: the live slot ends, future slots vanish, /now omits, reason reaches the author (real scheduler)", async () => {
+    const author = await userWithSession("ARTIST");
+    const moderator = await userWithSession("MODERATOR");
+    const { trackId } = await approvedTrackWithSlots();
+    await db.track.update({ where: { id: trackId }, data: { artist: { create: { userId: author.user.id, handle: `h-${Date.now()}`, displayName: "H206 Author" } } } });
+
+    // Real scheduler fills the timeline; the track goes on air.
+    const scheduler = startScheduler({ tickMs: 100 });
+    try {
+      await pollUntil(async () => {
+        const covering = await db.broadcastSlot.findFirst({ where: { trackId, startsAt: { lte: new Date() }, endsAt: { gt: new Date() } } });
+        return covering !== null;
+      }, 15_000);
+      // A future slot of the same track must also exist (the scheduler plans ahead).
+      await pollUntil(async () => (await db.broadcastSlot.count({ where: { trackId, startsAt: { gt: new Date() } } })) > 0, 15_000);
+
+      const { reportId } = await createReport({ targetType: "TRACK", targetId: trackId, reason: "stolen recording, copyright" }, null);
+      const before = new Date();
+      const res = await resolveReport(
+        { reportId, action: "TAKEDOWN", statementOfReasons: "Confirmed copyright violation — the recording is not yours." },
+        moderator.user,
+        { client: db },
+      );
+      expect(res.status).toBe("ACTIONED");
+
+      const track = await db.track.findUniqueOrThrow({ where: { id: trackId } });
+      expect(track.status).toBe("TAKEN_DOWN");
+      // The live slot ended at/before the takedown moment…
+      const live = await db.broadcastSlot.findFirst({ where: { trackId, startsAt: { lte: before }, endsAt: { gt: new Date(before.getTime() - 1) } } });
+      expect(live === null || live.endsAt.getTime() <= before.getTime() + 5).toBe(true);
+      // …and NO future slot of the track survives.
+      expect(await db.broadcastSlot.count({ where: { trackId, startsAt: { gt: before } } })).toBe(0);
+
+      // /now omits it immediately.
+      const nowBody = await radioNow(Date.now(), db);
+      const served = [...(nowBody.current ? [nowBody.current.track.id] : []), ...nowBody.next.map((s) => s.track.id)];
+      expect(served).not.toContain(trackId);
+
+      // Statement of reasons: visible to the author, stored on the report.
+      const mine = await db.track.findMany({ where: { artist: { is: { userId: author.user.id } } } });
+      expect(mine.map((t) => t.id)).toContain(trackId);
+      const stored = await db.report.findUniqueOrThrow({ where: { id: reportId } });
+      expect(stored.resolution).toContain("copyright violation");
+      expect(stored.resolvedById).toBe(moderator.user.id);
+      // Audit trail: takedown + report resolution.
+      expect(await db.auditLog.count({ where: { action: "track.taken-down", targetId: trackId } })).toBe(1);
+      expect(await db.auditLog.count({ where: { action: "report.resolved", targetId: reportId } })).toBe(1);
+
+      // Idempotent: a second takedown of the same track is a no-op.
+      const second = await takedownTrack(trackId, "again", moderator.user.id, { client: db });
+      expect(second.noop).toBe(true);
+      expect(await db.auditLog.count({ where: { action: "track.taken-down", targetId: trackId } })).toBe(1);
+
+      // The scheduler keeps the station alive: the hole gets refilled within a tick.
+      await pollUntil(async () => {
+        const body = await radioNow(Date.now(), db);
+        return body.current !== null || body.next.length > 0;
+      }, 15_000);
+    } finally {
+      await scheduler.stop().catch(() => {});
+    }
+  }, 40_000);
+
+  it("a ban without a reason is rejected; a reasoned ban updates bannedUntil and audits", async () => {
+    const moderator = await userWithSession("MODERATOR");
+    const target = await userWithSession("LISTENER");
+    const { reportId } = await createReport({ targetType: "USER", targetId: target.user.id, reason: "serial harasser" }, null);
+
+    // Validation layer: statementOfReasons is mandatory for every action.
+    expect(resolveSchema.safeParse({ reportId, action: "BAN", banDays: 7 }).success).toBe(false);
+    expect(resolveSchema.safeParse({ reportId, action: "BAN", statementOfReasons: "x", banDays: 7 }).success).toBe(true);
+
+    const res = await resolveReport(
+      { reportId, action: "BAN", statementOfReasons: "Repeated harassment after warnings.", banDays: 14 },
+      moderator.user,
+      { client: db },
+    );
+    expect(res.status).toBe("ACTIONED");
+    const banned = await db.user.findUniqueOrThrow({ where: { id: target.user.id } });
+    expect(banned.bannedUntil).not.toBeNull();
+    expect(banned.bannedUntil!.getTime()).toBeGreaterThan(Date.now() + 13 * 24 * 60 * 60 * 1000);
+    const auditRow = await db.auditLog.findFirst({ where: { action: "user.banned", targetId: target.user.id } });
+    expect(auditRow).not.toBeNull();
+    expect(JSON.stringify(auditRow!.payload)).toContain("Repeated harassment");
+  });
+
+  it("RESTRICT adds a RegionRestriction; /now bytes are identical for two countries and expose restrictedIn", async () => {
+    const moderator = await userWithSession("MODERATOR");
+    const { trackId } = await approvedTrackWithSlots();
+    const slot = await db.broadcastSlot.create({
+      data: { seq: 1n, trackId, startsAt: new Date(Date.now() - 1000), endsAt: new Date(Date.now() + 60_000) },
+    });
+    void slot;
+
+    const { reportId } = await createReport({ targetType: "TRACK", targetId: trackId, reason: "court order in DE" }, null);
+    await resolveReport(
+      { reportId, action: "RESTRICT", statementOfReasons: "Legal order, country-level restriction.", countryCode: "DE" },
+      moderator.user,
+      { client: db },
+    );
+    expect(await db.regionRestriction.count({ where: { trackId, countryCode: "DE" } })).toBe(1);
+
+    // Same body for everyone: two GET requests with DIFFERENT country
+    // headers produce byte-identical bodies except serverTime (which differs
+    // between any two real requests by design).
+    const { GET: nowGet } = await import("@/app/api/radio/now/route");
+    const resA = await nowGet(new Request("http://localhost:3000/api/radio/now", { headers: { "cf-ipcountry": "DE" } }), { params: Promise.resolve({}) });
+    const resB = await nowGet(new Request("http://localhost:3000/api/radio/now", { headers: { "cf-ipcountry": "FR" } }), { params: Promise.resolve({}) });
+    // serverTime and offsetMs advance with wall-clock time by design; every
+    // other byte must be identical.
+    const strip = (s: string) => s.replace(/"serverTime":\d+/, '"serverTime":0').replace(/"offsetMs":\d+/, '"offsetMs":0');
+    expect(strip(await resA.text())).toEqual(strip(await resB.text()));
+
+    const a = await radioNow(Date.now(), db);
+    const ids = [...(a.current ? [a.current.track.id] : []), ...a.next.map((s) => s.track.id)];
+    expect(ids).toContain(trackId);
+    const served = a.current?.track.id === trackId ? a.current.track : a.next.find((s) => s.track.id === trackId)!.track;
+    expect(served.restrictedIn).toEqual(["DE"]);
+  });
+
+  it("moderator queue lists OPEN reports; resolved reports leave the queue", async () => {
+    const moderator = await userWithSession("MODERATOR");
+    const { trackId } = await approvedTrackWithSlots();
+    const a = await createReport({ targetType: "TRACK", targetId: trackId, reason: "threats here" }, null);
+    const otherUser = await db.user.create({ data: { email: `queue-${Date.now()}@test.example` } });
+    const b = await createReport({ targetType: "TRACK", targetId: trackId, reason: "spam uploads" }, otherUser.id);
+    void b;
+    const queue = await listOpenReports({ client: db });
+    expect(queue.map((r) => r.id)).toContain(a.reportId);
+    // Threats outrank spam: the urgent report first.
+    expect(queue[0].category).toBe("THREATS");
+
+    await resolveReport({ reportId: a.reportId, action: "DISMISS", statementOfReasons: "Reviewed — no violation." }, moderator.user, { client: db });
+    expect((await listOpenReports({ client: db })).map((r) => r.id)).not.toContain(a.reportId);
+    // Resolving twice is refused.
+    await expect(
+      resolveReport({ reportId: a.reportId, action: "DISMISS", statementOfReasons: "again" }, moderator.user, { client: db }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("POST /api/reports answers without auth (public door) and /api/geo reads cf-ipcountry uncached", async () => {
+    // Public report door: an anonymous contact report through the real handler.
+    const { POST } = await import("@/app/api/reports/route");
+    const res = await POST(
+      new Request("http://localhost:3000/api/reports", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({ targetType: "TRACK", targetId: "no-such-track", reason: "fraud attempt", reporterContact: "legal@example.com" }),
+      }),
+      { params: Promise.resolve({}) },
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { reportId: string; deduped: boolean };
+    expect(body.deduped).toBe(false);
+
+    // Anonymous without contact → 422 (the legal contact is mandatory).
+    const noContact = await POST(
+      new Request("http://localhost:3000/api/reports", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({ targetType: "TRACK", targetId: "x", reason: "r" }),
+      }),
+      { params: Promise.resolve({}) },
+    );
+    expect(noContact.status).toBe(422);
+
+    // Geo: the country comes from the single trusted header, uncached.
+    const { GET } = await import("@/app/api/geo/route");
+    const geo = await GET(new Request("http://localhost:3000/api/geo", { headers: { "cf-ipcountry": "de" } }), { params: Promise.resolve({}) });
+    expect(geo.status).toBe(200);
+    expect(geo.headers.get("cache-control")).toContain("no-store");
+    expect(((await geo.json()) as { country: string }).country).toBe("DE");
+    const geoNoHeader = await GET(new Request("http://localhost:3000/api/geo"), { params: Promise.resolve({}) });
+    expect(((await geoNoHeader.json()) as { country: string | null }).country).toBeNull();
   });
 });

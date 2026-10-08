@@ -21,11 +21,15 @@ type SlotRow = {
   durationSec: number;
   artist: string | null;
   audioUrl: string | null;
+  restrictedIn: string[] | null;
 };
 
 /**
  * Reads the timeline: the slot covering `nowMs` (if any) plus the next ones.
- * One query; the injectable client keeps the query count testable.
+ * One query; the injectable client keeps the query count testable. The
+ * restrictedIn subquery (H-206) is part of the same statement, so the body
+ * stays identical for every listener (cache-safe: the player applies the
+ * restrictions client-side from GET /api/geo).
  */
 export async function radioNow(
   nowMs: number,
@@ -36,7 +40,10 @@ export async function radioNow(
     SELECT s."seq", s."trackId", s."startsAt", s."endsAt",
            t."title", t."durationSec",
            a."displayName" AS "artist",
-           ts."url"        AS "audioUrl"
+           ts."url"        AS "audioUrl",
+           (SELECT array_agg(rr."countryCode" ORDER BY rr."countryCode")
+              FROM "RegionRestriction" rr
+             WHERE rr."trackId" = t."id") AS "restrictedIn"
       FROM "BroadcastSlot" s
       JOIN "Track" t        ON t."id" = s."trackId"
       LEFT JOIN "ArtistProfile" a ON a."id" = t."artistId"
@@ -54,6 +61,7 @@ export async function radioNow(
     artist: row.artist,
     durationSec: row.durationSec,
     audioUrl: row.audioUrl ?? "",
+    restrictedIn: row.restrictedIn ?? [],
   });
 
   const first = rows[0];
