@@ -45,6 +45,7 @@ export function RadioPlayer() {
   const currentRef = useRef<ServerSlot | null>(null);
   const countryRef = useRef<string | null | undefined>(undefined);
   const [mode, setMode] = useState<Mode>("radio");
+  const modeRef = useRef<Mode>("radio");
   const [playing, setPlaying] = useState(false);
   const [nowTitle, setNowTitle] = useState<string | null>(null);
   const stoppedRef = useRef(false);
@@ -55,11 +56,30 @@ export function RadioPlayer() {
   const reactionTrackRef = useRef<string | null>(null);
   const [reaction, setReaction] = useState<"LIKE" | "DISLIKE" | null>(null);
   const [likeLocked, setLikeLocked] = useState(false);
+  // H-302: the playlist playback mode.
+  const [playlists, setPlaylists] = useState<Array<{ id: string; name: string; itemCount: number }>>([]);
+  const [queue, setQueue] = useState<Array<{ trackId: string; title: string | null; unavailable: boolean; audioUrl: string }>>([]);
+  const [queueIndex, setQueueIndex] = useState<number | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   // H-212 (G3): per-slot retry budget and standby backoff state.
   const failedRef = useRef<FailureState | null>(null);
   const emptyPollsRef = useRef(0);
   const pollNowRef = useRef<() => void>(() => {});
   const [playbackFailed, setPlaybackFailed] = useState(false);
+
+  // H-302: switching tabs toggles who owns the audio element; leaving the
+  // playlist mode stops on-demand playback.
+  const switchMode = useCallback((next: Mode): void => {
+    modeRef.current = next;
+    if (next === "radio") {
+      if (sessionIdRef.current) {
+        sessionIdRef.current = null;
+      }
+      setQueueIndex(null);
+      setQueue([]);
+    }
+    setMode(next);
+  }, []);
 
   // H-206: the listener's country is fetched once (uncached /api/geo) and
   // combined with the shared /now body client-side — the timeline stays
@@ -87,6 +107,12 @@ export function RadioPlayer() {
     const effective = applyRestrictions(data, countryRef.current);
     const current = effective.current;
     currentRef.current = current ? { startsAt: current.startsAt, endsAt: current.endsAt } : null;
+
+    if (modeRef.current === "playlist") {
+      // H-302: on-demand playback owns the audio element; the radio
+      // timeline is only kept fresh in the background.
+      return;
+    }
 
     const audio = audioRef.current;
     if (!audio) return;
@@ -275,6 +301,86 @@ export function RadioPlayer() {
     };
   }, [slotTrackId]);
 
+  // H-302: playlist mode — queue, next/previous, seek allowed, PLAYLIST
+  // listening sessions, and the add-to-playlist action.
+  const loadPlaylists = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetch("/api/playlists", { cache: "no-store" });
+      if (res.ok) {
+        const body = (await res.json()) as { playlists?: Array<{ id: string; name: string; itemCount: number }> };
+        setPlaylists(body.playlists ?? []);
+      }
+    } catch {
+      /* offline: the select stays empty */
+    }
+  }, []);
+
+  const openQueue = useCallback(async (playlistId: string): Promise<void> => {
+    try {
+      const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const body = (await res.json()) as {
+        items?: Array<{ trackId: string; unavailable: boolean; title?: string; audioUrl?: string }>;
+      };
+      const items = (body.items ?? []).map((i) => ({
+        trackId: i.trackId,
+        title: i.unavailable ? null : (i.title ?? null),
+        unavailable: i.unavailable,
+        audioUrl: i.audioUrl ?? "",
+      }));
+      setQueue(items);
+      setQueueIndex(null);
+    } catch {
+      /* offline */
+    }
+  }, []);
+
+  const startPlaylistItem = useCallback(
+    async (index: number): Promise<void> => {
+      const item = queue[index];
+      const audio = audioRef.current;
+      if (!item || item.unavailable || !audio) return;
+      const sid = await startListenSession({ trackId: item.trackId, mode: "PLAYLIST", anonId: anonId() });
+      sessionIdRef.current = sid; // PLAYLIST sessions feed the same verification gate
+      audio.src = new URL(item.audioUrl, window.location.origin).toString();
+      audio.currentTime = 0;
+      setQueueIndex(index);
+      setNowTitle(item.title);
+      void audio.play().then(() => setPlaying(true)).catch(() => {});
+    },
+    [queue, anonId],
+  );
+
+  const skipPlaylist = useCallback(
+    (delta: number): void => {
+      if (queueIndex === null) return;
+      const next = queueIndex + delta;
+      if (next < 0 || next >= queue.length) return;
+      void startPlaylistItem(next);
+    },
+    [queueIndex, queue.length, startPlaylistItem],
+  );
+
+  const addToPlaylist = useCallback(
+    (playlistId: string): void => {
+      const trackId = slotTrackId;
+      if (!trackId) return;
+      void (async () => {
+        try {
+          const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/items`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ trackId }),
+          });
+          if (res.ok) setAddOpen(false);
+        } catch {
+          /* offline */
+        }
+      })();
+    },
+    [slotTrackId],
+  );
+
   const onLike = useCallback((): void => {
     const trackId = slotTrackId;
     if (!trackId) return;
@@ -407,13 +513,79 @@ export function RadioPlayer() {
           type="button"
           role="tab"
           aria-selected={mode === "playlist"}
-          disabled
-          title={t("comingSoon")}
-          className="text-neutral-600"
+          onClick={() => {
+            if (mode === "playlist") switchMode("radio");
+            else {
+              switchMode("playlist");
+              void loadPlaylists();
+            }
+          }}
+          className={mode === "playlist" ? "font-semibold text-[#D4AF37]" : "text-neutral-400"}
         >
-          {t("modePlaylistStub")}
+          {t("modePlaylist")}
         </button>
       </div>
+      {mode === "playlist" && (
+        <div className="mt-3 space-y-2 text-sm">
+          <div className="flex items-center gap-2">
+            <select
+              aria-label={t("playlistPick")}
+              onChange={(e) => void openQueue(e.target.value)}
+              className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1"
+              defaultValue=""
+            >
+              <option value="" disabled>
+                {t("playlistPick")}
+              </option>
+              {playlists.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {`${p.name} (${p.itemCount})`}
+                </option>
+              ))}
+            </select>
+            <button type="button" onClick={() => void startPlaylistItem(0)} disabled={queue.length === 0} className="rounded border px-2 py-1 disabled:opacity-40">
+              {t("play")}
+            </button>
+            <button type="button" onClick={() => skipPlaylist(-1)} disabled={queueIndex === null || queueIndex <= 0} className="rounded border px-2 py-1 disabled:opacity-40">
+              {t("previous")}
+            </button>
+            <button type="button" onClick={() => skipPlaylist(1)} disabled={queueIndex === null || queueIndex >= queue.length - 1} className="rounded border px-2 py-1 disabled:opacity-40">
+              {t("next")}
+            </button>
+          </div>
+          {queue.length > 0 && (
+            <ol className="space-y-1">
+              {queue.map((item, i) => (
+                <li key={item.trackId}>
+                  <button
+                    type="button"
+                    onClick={() => void startPlaylistItem(i)}
+                    disabled={item.unavailable}
+                    className={i === queueIndex ? "font-semibold text-[#D4AF37]" : "text-neutral-300 disabled:text-neutral-600"}
+                  >
+                    {item.unavailable ? t("playlistUnavailable") : (item.title ?? "")}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
+      {mode === "radio" && slotTrackId && playing && (
+        <details className="mt-2 text-sm" open={addOpen} onToggle={(e) => setAddOpen((e.target as HTMLDetailsElement).open)}>
+          <summary className="cursor-pointer text-neutral-400">{t("addToPlaylist")}</summary>
+          {playlists.length === 0 && <span className="text-neutral-500">{t("noPlaylists")}</span>}
+          <ul className="mt-1 space-y-1">
+            {playlists.map((p) => (
+              <li key={p.id}>
+                <button type="button" onClick={() => addToPlaylist(p.id)} className="text-neutral-300 hover:text-[#D4AF37]">
+                  {p.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       <audio ref={audioRef} preload="none" />
     </section>
   );

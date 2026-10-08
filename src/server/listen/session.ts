@@ -60,7 +60,7 @@ export async function startListenSession(
 
   const track = await client.track.findUnique({
     where: { id: input.trackId },
-    select: { id: true, status: true, available: true },
+    select: { id: true, status: true, available: true, licenseScope: true },
   });
   if (!track) throw new HttpError(404, "TRACK_NOT_FOUND", `no track ${input.trackId}`);
 
@@ -76,10 +76,14 @@ export async function startListenSession(
       throw new HttpError(409, "NOT_ON_AIR", `track ${input.trackId} is not the current RADIO slot`);
     }
   } else {
-    // PLAYLIST: an APPROVED, available track (personal playlists arrive
-    // with H-302; verification semantics are the same).
+    // PLAYLIST (H-302): eligibility is re-checked at play time — an
+    // APPROVED, available track whose licence allows on-demand play. A
+    // RADIO_ONLY track must never be playable on demand (Owner-approved).
     if (track.status !== "APPROVED" || !track.available) {
       throw new HttpError(409, "TRACK_NOT_PUBLIC", `track ${input.trackId} is not public`);
+    }
+    if (track.licenseScope !== "RADIO_AND_PLAYLISTS") {
+      throw new HttpError(409, "TRACK_LICENSED_RADIO_ONLY", `track ${input.trackId} may not be played on demand`);
     }
   }
 
