@@ -2903,9 +2903,13 @@ describe.skipIf(!databaseUrl)("moderator console (H-207)", () => {
   });
 
   async function moderatorUser(): Promise<User> {
-    return db.user.create({
+    const user = await db.user.create({
       data: { email: `mod-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.example`, role: "MODERATOR" },
     });
+    await db.session.create({
+      data: { userId: user.id, sessionToken: `tok-${user.id}`, expires: new Date(Date.now() + 24 * 60 * 60 * 1000) },
+    });
+    return user;
   }
 
   /** A queued track: PENDING with the HUMAN/REVIEW marker and pipeline evidence. */
