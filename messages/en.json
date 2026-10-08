@@ -12,7 +12,8 @@
     "pause": "Pause",
     "nowPlaying": "Now playing",
     "standby": "Standby — the station is silent right now",
-    "modePlaylistStub": "My playlist (coming soon)"
+    "modePlaylistStub": "My playlist (coming soon)",
+    "playbackFailed": "This track failed to play — waiting for the next one…"
   },
   "language": {
     "label": "Language"
