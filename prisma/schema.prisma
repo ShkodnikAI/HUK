@@ -241,6 +241,7 @@ model Track {
 
   artist       ArtistProfile?      @relation(fields: [artistId], references: [id], onDelete: SetNull)
   source       TrackSource?
+  listenSessions ListenSession[]
   terms        TrackTerm[]
   runs         ModerationRun[]
   slots        BroadcastSlot[]
@@ -356,6 +357,7 @@ model Reaction {
   userId    String
   trackId   String
   type      ReactionType
+  ipHash    String?      // H-301 (S7): rotating salted hash of the writer's IP
   createdAt DateTime     @default(now())
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -366,6 +368,27 @@ model Reaction {
 }
 
 // Raw listening telemetry; rows older than the retention window are aggregated and deleted.
+// H-301: server-verified listening session (S7: closed sessions are purged
+// after 48 h by the H-210 runner). `id` is unguessable and is the only
+// handle the client holds.
+model ListenSession {
+  id          String     @id @default(cuid())
+  userId      String?
+  anonHash    String?    // salted hash of the client's random id; rotating salt
+  trackId     String
+  mode        ListenMode
+  startedAt   DateTime   @default(now())
+  lastBeatAt  DateTime   @default(now())
+  verifiedMs  Int        @default(0)
+  completed   Boolean    @default(false)
+  closedAt    DateTime?
+
+  track       Track      @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@index([trackId, startedAt])
+  @@index([closedAt])
+}
+
 model ListenEvent {
   id         String     @id @default(cuid())
   userId     String?
