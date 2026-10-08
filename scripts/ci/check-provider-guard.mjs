@@ -87,9 +87,17 @@ if (!fs.existsSync(ADAPTERS)) {
   process.exit(0);
 }
 
-const files = fs.readdirSync(ADAPTERS, { withFileTypes: true })
-  .filter((e) => e.isFile() && /\.(ts|tsx|mts|js|mjs)$/.test(e.name))
-  .map((e) => path.join(ADAPTERS, e.name));
+// Recursive walk (H-205): provider adapters may live in subdirectories
+// (adapters/fingerprint/**), the tripwire covers every one of them.
+function walkAdapters(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) return walkAdapters(p);
+    return /\.(ts|tsx|mts|js|mjs)$/.test(e.name) ? [p] : [];
+  });
+}
+
+const files = walkAdapters(ADAPTERS).sort();
 
 for (const f of files) {
   const rel = path.relative(ROOT, f).split(path.sep).join('/');

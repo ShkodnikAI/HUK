@@ -28,9 +28,10 @@ import type {
   StageName,
   StageVerdict,
 } from "./types";
-import { ReviewOnlyFingerprintAdapter } from "./adapters/fingerprint";
 import { ReviewOnlyAsrAdapter } from "./adapters/asr";
 import { ReviewOnlyLlmAdapter } from "./adapters/llm";
+import { fingerprintAdapterFromEnv } from "./adapters/fingerprint/index";
+import { loadEnv } from "@/server/env";
 
 /** Confidence a policy verdict needs for an automatic APPROVE or REJECT. */
 export const DECISION_CONFIDENCE_THRESHOLD = 0.75;
@@ -63,10 +64,12 @@ type StageRun = {
   costMicroUsd: number;
 };
 
-/** Production adapter set until the real providers land (H-205/H-208). */
+/** Production adapter set; the fingerprint stage keys off env (H-205):
+ *  ACOUSTID_API_KEY set → the real AcoustID adapter, otherwise review-only
+ *  (SKIPPED ⇒ never auto-approve). ASR/LLM stay review-only until H-208. */
 export function defaultAdapters(): ModerationAdapters {
   return {
-    fingerprint: new ReviewOnlyFingerprintAdapter(),
+    fingerprint: fingerprintAdapterFromEnv(loadEnv()),
     asr: new ReviewOnlyAsrAdapter(),
     llm: new ReviewOnlyLlmAdapter(),
   };

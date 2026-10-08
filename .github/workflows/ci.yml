@@ -113,12 +113,13 @@ jobs:
           echo "web uid=$web_uid worker uid=$worker_uid"
           [ "$web_uid" != "0" ] || { echo "web runs as root"; exit 1; }
           [ "$worker_uid" != "0" ] || { echo "worker runs as root"; exit 1; }
-      - name: Worker image has ffprobe/ffmpeg and the policy file (H-204)
+      - name: Worker image has ffprobe/ffmpeg, fpcalc and the policy file (H-204, H-205)
         run: |
           docker compose exec -T worker ffprobe -version | head -1
           docker compose exec -T worker ffmpeg -version | head -1
+          docker compose exec -T worker fpcalc -version | head -1
           docker compose exec -T worker test -f policy/moderation-policy.md
-          echo "worker ffmpeg + policy: OK"
+          echo "worker ffmpeg + fpcalc + policy: OK"
       - name: GET /api/health answers 200
         run: |
           code="$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health)"

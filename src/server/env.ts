@@ -80,6 +80,18 @@ const schema = z.object({
   SOURCE_FULL_HASH_DAYS: z.coerce.number().int().positive().default(7),
   SOURCE_MAX_FAILS: z.coerce.number().int().positive().default(5),
   SOURCE_VERIFY_BATCH: z.coerce.number().int().positive().default(20),
+  // H-205: fingerprint stage. The AcoustID adapter ships DISABLED without
+  // ACOUSTID_API_KEY (missing key ⇒ SKIPPED ⇒ never auto-approve); the
+  // strong-match threshold is the auto-approval blocker (policy item 7).
+  FINGERPRINT_STRONG_SCORE: z.coerce.number().min(0).max(1).default(0.9),
+  // H-205: AudD is a paid provider — owner decision pending (D-family),
+  // so no default configuration may flip it on (mirrors AUDIUS_ENABLED).
+  AUDD_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  // H-205: AudD segments sampled per track (12 s each).
+  AUDD_SEGMENTS: z.coerce.number().int().min(1).max(10).default(4),
 });
 
 export type Env = z.infer<typeof schema>;
