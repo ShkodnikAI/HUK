@@ -135,23 +135,30 @@ function classifyIPv4(b: number[]): "forbidden" | "allowed" {
   if (a === 172 && c >= 16 && c <= 31) return "forbidden";
   if (a === 192 && c === 168) return "forbidden";
   if (a === 100 && c >= 64 && c <= 127) return "forbidden";
+  // H-213 (G4): IANA special-purpose ranges that are not global unicast —
+  // protocol assignments, TEST-NET-1/2/3 and the benchmarking block.
+  if (a === 192 && c === 0 && b[2] === 0) return "forbidden"; // 192.0.0.0/24
+  if (a === 192 && c === 0 && b[2] === 2) return "forbidden"; // 192.0.2.0/24 TEST-NET-1
+  if (a === 198 && (c === 18 || c === 19)) return "forbidden"; // 198.18.0.0/15 benchmarking
+  if (a === 198 && c === 51 && b[2] === 100) return "forbidden"; // 198.51.100.0/24 TEST-NET-2
+  if (a === 203 && c === 0 && b[2] === 113) return "forbidden"; // 203.0.113.0/24 TEST-NET-3
   return "allowed";
 }
 
 function classifyIPv6(groups: number[]): "forbidden" | "allowed" {
-  if (groups.every((g) => g === 0)) return "forbidden"; // :: unspecified
-  if (groups.slice(0, 7).every((g) => g === 0) && groups[7] === 1) return "forbidden"; // ::1 loopback
-  if ((groups[0] & 0xfe00) === 0xfc00) return "forbidden"; // fc00::/7 ULA
-  if ((groups[0] & 0xffc0) === 0xfe80) return "forbidden"; // fe80::/10 link-local
-  if ((groups[0] & 0xff00) === 0xff00) return "forbidden"; // ff00::/8 multicast
-  // ::ffff:0:0/96 (IPv4-mapped) and 64:ff9b::/96 (NAT64): classify the
-  // embedded IPv4 so a forbidden v4 cannot sneak in as v6.
-  if (groups[0] === 0 && groups[1] === 0 && groups[2] === 0 && groups[3] === 0 && groups[4] === 0 && groups[5] === 0xffff) {
-    return classifyIPv4([(groups[6] >> 8) & 0xff, groups[6] & 0xff, (groups[7] >> 8) & 0xff, groups[7] & 0xff]);
-  }
+  // H-213 (G4): default-deny. NAT64 is classified by its embedded IPv4;
+  // everything else must be global unicast 2000::/3, minus the special-
+  // purpose ranges inside it. A forbidden IPv4 can no longer sneak in as
+  // an IPv6 form: IPv4-compatible (::x.y.z.w), IPv4-translated, mapped
+  // non-NAT64 forms and 64:ff9b:1::/48 all fall through to "forbidden".
+  // 64:ff9b::/96 (NAT64) sits outside 2000::/3 but embeds a global IPv4 —
+  // classify it by that address.
   if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every((g) => g === 0)) {
     return classifyIPv4([(groups[6] >> 8) & 0xff, groups[6] & 0xff, (groups[7] >> 8) & 0xff, groups[7] & 0xff]);
   }
+  if ((groups[0] & 0xe000) !== 0x2000) return "forbidden"; // only 2000::/3 passes
+  if (groups[0] === 0x2001 && (groups[1] === 0x0000 || groups[1] === 0x0db8)) return "forbidden"; // Teredo / documentation
+  if (groups[0] === 0x2002) return "forbidden"; // 6to4 — a forbidden IPv4 can hide in the tail
   return "allowed";
 }
 
