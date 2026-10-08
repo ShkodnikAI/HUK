@@ -208,6 +208,111 @@
         "ADMIN": 422,
         "banned": 403
       }
+    },
+    "/api/playlists": [
+      {
+        "method": "GET",
+        "expected": {
+          "anonymous": 401,
+          "LISTENER": 200,
+          "ARTIST": 200,
+          "MODERATOR": 200,
+          "ADMIN": 200,
+          "banned": 403
+        }
+      },
+      {
+        "method": "POST",
+        "expected": {
+          "anonymous": 401,
+          "LISTENER": 400,
+          "ARTIST": 400,
+          "MODERATOR": 400,
+          "ADMIN": 400,
+          "banned": 403
+        }
+      }
+    ],
+    "/api/playlists/:id": [
+      {
+        "method": "GET",
+        "expected": {
+          "anonymous": 404,
+          "LISTENER": 404,
+          "ARTIST": 404,
+          "MODERATOR": 404,
+          "ADMIN": 404,
+          "banned": 404
+        }
+      },
+      {
+        "method": "PATCH",
+        "expected": {
+          "anonymous": 401,
+          "LISTENER": 400,
+          "ARTIST": 400,
+          "MODERATOR": 400,
+          "ADMIN": 400,
+          "banned": 403
+        }
+      },
+      {
+        "method": "DELETE",
+        "expected": {
+          "anonymous": 401,
+          "LISTENER": 404,
+          "ARTIST": 404,
+          "MODERATOR": 404,
+          "ADMIN": 404,
+          "banned": 403
+        }
+      }
+    ],
+    "/api/playlists/:id/items": [
+      {
+        "method": "POST",
+        "expected": {
+          "anonymous": 401,
+          "LISTENER": 400,
+          "ARTIST": 400,
+          "MODERATOR": 400,
+          "ADMIN": 400,
+          "banned": 403
+        }
+      },
+      {
+        "method": "PATCH",
+        "expected": {
+          "anonymous": 401,
+          "LISTENER": 400,
+          "ARTIST": 400,
+          "MODERATOR": 400,
+          "ADMIN": 400,
+          "banned": 403
+        }
+      }
+    ],
+    "/api/playlists/:id/items/:trackId": {
+      "method": "DELETE",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 404,
+        "ARTIST": 404,
+        "MODERATOR": 404,
+        "ADMIN": 404,
+        "banned": 403
+      }
+    },
+    "/api/playlists/import": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 400,
+        "ARTIST": 400,
+        "MODERATOR": 400,
+        "ADMIN": 400,
+        "banned": 403
+      }
     }
   }
 }

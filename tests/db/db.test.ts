@@ -38,18 +38,34 @@ import { route } from "@/server/http/handler";
 import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
 import { VERIFIED_FOR_REACTION_MS, beat, closeStaleSessions, startListenSession } from "@/server/listen/session";
 import { react, unreact } from "@/server/reactions/service";
+import {
+  addItem,
+  createPlaylist,
+  deletePlaylist,
+  getPlaylist,
+  importPlaylist,
+  MAX_PLAYLISTS_PER_USER,
+  MAX_TRACKS_PER_PLAYLIST,
+  removeItem,
+  reorderItems,
+  updatePlaylist,
+} from "@/server/playlists/service";
 import { startMaintenance, type MaintenanceJob } from "@/server/maintenance/runner";
 import type { PrismaClient, User } from "@prisma/client";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
-interface MatrixFile {
-  actors: string[];
-  routes: Record<string, {
+interface MatrixEntry {
     method: string;
     skipCall?: boolean;
     expected: Record<string, number>;
-  }>;
+  }
+
+  interface MatrixFile {
+    actors: string[];
+    // H-302: one path may expose several methods — an entry is one method
+    // or a list of them.
+    routes: Record<string, MatrixEntry | MatrixEntry[]>;
 }
 
 /** Polls `cond` until true or the timeout elapses (CI runners are slow). */
@@ -1088,34 +1104,38 @@ describe.skipIf(!databaseUrl)("auth guard, matrix and magic-link flows (H-102)",
     tokens.banned = banned.session.sessionToken;
 
     for (const key of discovered) {
-      const entry = matrix.routes[key as keyof typeof matrix.routes];
-      if (entry.skipCall) continue; // public-by-design; flows tested separately
+      const raw = matrix.routes[key as keyof typeof matrix.routes];
+      const entries = Array.isArray(raw) ? raw : [raw];
 
       // H-301: generalise path params (:trackId) to the directory form.
       const mod = await import(
         `@/app${key === "/api" ? "" : key.replace(":nextauth*", "[...nextauth]").replace(/:(\w+)/g, "[$1]")}/route`
       );
-      const handler = mod[entry.method];
-      expect(handler, `${entry.method} export missing for ${key}`).toBeTruthy();
 
-      for (const actor of actors) {
-        // H-110 F12: mutating requests need a same-origin header — the
-        // harness sends the platform origin for every non-GET call.
-        const mutationHeaders: Record<string, string> =
-          entry.method === "GET" || entry.method === "HEAD"
-            ? {}
-            : { origin: "http://localhost:3000" };
-        const req = new Request(`http://localhost:3000${key.replace(/:\w+\*/, "x")}`, {
-          method: entry.method,
-          headers: {
-            ...(tokens[actor] ? { cookie: `${SESSION_COOKIE}=${tokens[actor]}` } : {}),
-            ...mutationHeaders,
-          },
-        });
-        const res = await handler(req, { params: Promise.resolve({}) });
-        expect(res.status, `${entry.method} ${key} as ${actor}`).toBe(
-          entry.expected[actor as keyof typeof entry.expected],
-        );
+      for (const entry of entries) {
+        if (entry.skipCall) continue; // public-by-design; flows tested separately
+        const handler = mod[entry.method];
+        expect(handler, `${entry.method} export missing for ${key}`).toBeTruthy();
+
+        for (const actor of actors) {
+          // H-110 F12: mutating requests need a same-origin header — the
+          // harness sends the platform origin for every non-GET call.
+          const mutationHeaders: Record<string, string> =
+            entry.method === "GET" || entry.method === "HEAD"
+              ? {}
+              : { origin: "http://localhost:3000" };
+          const req = new Request(`http://localhost:3000${key.replace(/:\w+\*/, "x")}`, {
+            method: entry.method,
+            headers: {
+              ...(tokens[actor] ? { cookie: `${SESSION_COOKIE}=${tokens[actor]}` } : {}),
+              ...mutationHeaders,
+            },
+          });
+          const res = await handler(req, { params: Promise.resolve({}) });
+          expect(res.status, `${entry.method} ${key} as ${actor}`).toBe(
+            entry.expected[actor as keyof typeof entry.expected],
+          );
+        }
       }
     }
   });
@@ -3530,7 +3550,8 @@ describe.skipIf(!databaseUrl)("listening verification and reactions (H-301)", ()
 
   async function approvedTrack(durationSec = 300): Promise<string> {
     const track = await db.track.create({
-      data: { title: "h301 track", status: "APPROVED", available: true, durationSec },
+      // H-302: PLAYLIST verification requires the on-demand licence.
+      data: { title: "h301 track", status: "APPROVED", available: true, durationSec, licenseScope: "RADIO_AND_PLAYLISTS" },
     });
     await db.trackSource.create({ data: { trackId: track.id, provider: "SEED", url: "https://seed.test/h301.mp3" } });
     return track.id;
@@ -3773,5 +3794,154 @@ describe.skipIf(!databaseUrl)("listening verification and reactions (H-301)", ()
     const summary2 = await job.run();
     expect(summary2).toContain("1 closed sessions purged");
     expect(await db.listenSession.count()).toBe(1); // the recent one survives
+  });
+});
+
+describe.skipIf(!databaseUrl)("personal playlists (H-302)", () => {
+  const db = makeClient();
+  let textCheckCalls: string[] = [];
+  let clock = 1_700_000_000_000;
+  const nowFn = (): Date => new Date(clock);
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+    textCheckCalls = [];
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  /** The textCheck spy: records inputs, fails closed for a marker value. */
+  const spyTextCheck = async (text: string): Promise<boolean> => {
+    textCheckCalls.push(text);
+    return !text.includes("REJECTED-BY-CHECK");
+  };
+
+  const seam = () => ({ client: db, textCheck: spyTextCheck });
+
+  async function eligibleTrack(overrides?: { status?: string; available?: boolean; licenseScope?: string }): Promise<string> {
+    const track = await db.track.create({
+      data: {
+        title: "h302 track",
+        status: (overrides?.status ?? "APPROVED") as never,
+        available: overrides?.available ?? true,
+        licenseScope: (overrides?.licenseScope ?? "RADIO_AND_PLAYLISTS") as never,
+        durationSec: 120,
+      },
+    });
+    await db.trackSource.create({ data: { trackId: track.id, provider: "SEED", url: "https://seed.test/h302.mp3" } });
+    return track.id;
+  }
+
+  it("a RADIO_ONLY track cannot be added (409) and, if the scope changes later, cannot be played from the playlist", async () => {
+    const user = await db.user.create({ data: { email: "h302@test.example" } });
+    const { id: playlistId } = await createPlaylist(user.id, { name: "My list" }, seam());
+    const radioOnly = await eligibleTrack({ licenseScope: "RADIO_ONLY" });
+    await expect(addItem(playlistId, user.id, radioOnly, seam())).rejects.toMatchObject({ code: "TRACK_INELIGIBLE", status: 409 });
+
+    // Eligible now, RADIO_ONLY later: it stays in the playlist as an
+    // untitled placeholder and listen/start refuses to play it.
+    const onDemand = await eligibleTrack();
+    await addItem(playlistId, user.id, onDemand, seam());
+    await db.track.update({ where: { id: onDemand }, data: { licenseScope: "RADIO_ONLY" } });
+    const view = await getPlaylist(playlistId, user.id, seam());
+    expect(view.items[0]).toMatchObject({ trackId: onDemand, unavailable: true });
+    expect(JSON.stringify(view)).not.toContain("h302 track"); // no title leak
+
+    await expect(
+      startListenSession(
+        { trackId: onDemand, mode: "PLAYLIST", anonId: "anon-id-0123456789" },
+        { userId: null, anonHash: null },
+        { client: db, now: nowFn },
+      ),
+    ).rejects.toMatchObject({ code: "TRACK_LICENSED_RADIO_ONLY", status: 409 });
+  });
+
+  it("limits are enforced under concurrency (51st playlist, 501st track) and reorder keeps positions contiguous", async () => {
+    const user = await db.user.create({ data: { email: "h302b@test.example" } });
+    // 50 playlists, then the 51st concurrently: exactly one of the two wins.
+    const results = await Promise.all(
+      Array.from({ length: MAX_PLAYLISTS_PER_USER + 1 }, (_, i) =>
+        createPlaylist(user.id, { name: `list-${i}` }, seam()).then((r) => r.id).catch((e) => (e.code === "PLAYLIST_LIMIT" ? null : Promise.reject(e))),
+      ),
+    );
+    const ok = results.filter(Boolean).length;
+    expect(ok).toBe(MAX_PLAYLISTS_PER_USER);
+    expect(await db.playlist.count({ where: { ownerId: user.id } })).toBe(MAX_PLAYLISTS_PER_USER);
+
+    const target = (await db.playlist.findFirstOrThrow({ where: { ownerId: user.id } })).id;
+    const trackIds = await Promise.all(Array.from({ length: MAX_TRACKS_PER_PLAYLIST + 1 }, () => eligibleTrack()));
+    const added = await Promise.all(
+      trackIds.map((trackId) =>
+        addItem(target, user.id, trackId, seam())
+          .then(() => true)
+          .catch((e) => (e.code === "PLAYLIST_FULL" ? false : Promise.reject(e))),
+      ),
+    );
+    expect(added.filter(Boolean).length).toBe(MAX_TRACKS_PER_PLAYLIST); // the 501st loses under concurrency
+    expect(await db.playlistItem.count({ where: { playlistId: target } })).toBe(MAX_TRACKS_PER_PLAYLIST);
+
+    // Reorder: reversed order, positions contiguous again.
+    const current = await db.playlistItem.findMany({ where: { playlistId: target }, orderBy: { position: "asc" }, select: { trackId: true } });
+    const reversed = current.map((i) => i.trackId).reverse();
+    await reorderItems(target, user.id, reversed, seam());
+    const after = await db.playlistItem.findMany({ where: { playlistId: target }, orderBy: { position: "asc" }, select: { trackId: true, position: true } });
+    expect(after.map((i) => i.trackId)).toEqual(reversed);
+    expect(after.map((i) => i.position)).toEqual(Array.from({ length: MAX_TRACKS_PER_PLAYLIST }, (_, i) => i));
+    // An incomplete order is rejected.
+    await expect(reorderItems(target, user.id, reversed.slice(1), seam())).rejects.toMatchObject({ code: "INVALID_ORDER" });
+  });
+
+  it("a taken-down track becomes an untitled placeholder; a PRIVATE playlist is 404 for others (and 404-shaped for missing ids)", async () => {
+    const owner = await db.user.create({ data: { email: "h302c@test.example" } });
+    const outsider = await db.user.create({ data: { email: "h302d@test.example" } });
+    const { id: playlistId } = await createPlaylist(owner.id, { name: "Private", visibility: "PRIVATE" }, seam());
+    const trackId = await eligibleTrack();
+    await addItem(playlistId, owner.id, trackId, seam());
+    await db.track.update({ where: { id: trackId }, data: { status: "TAKEN_DOWN" } });
+
+    const ownerView = await getPlaylist(playlistId, owner.id, seam());
+    expect(ownerView.items[0]).toMatchObject({ trackId, unavailable: true });
+    expect(JSON.stringify(ownerView)).not.toContain("h302 track");
+    await expect(getPlaylist(playlistId, outsider.id, seam())).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
+    await expect(getPlaylist(playlistId, null, seam())).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
+    await expect(getPlaylist("does-not-exist", owner.id, seam())).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
+
+    // UNLISTED is readable by anyone; PUBLIC likewise.
+    await updatePlaylist(playlistId, owner.id, { visibility: "UNLISTED" }, seam());
+    const unlisted = await getPlaylist(playlistId, null, seam());
+    expect(unlisted.name).toBe("Private");
+    await deletePlaylist(playlistId, owner.id, seam());
+    expect(await db.playlist.count({ where: { ownerId: owner.id } })).toBe(0);
+  });
+
+  it("import drops ineligible ids and reports them; item removal keeps positions contiguous", async () => {
+    const user = await db.user.create({ data: { email: "h302e@test.example" } });
+    const good1 = await eligibleTrack();
+    const good2 = await eligibleTrack();
+    const radioOnly = await eligibleTrack({ licenseScope: "RADIO_ONLY" });
+    const result = await importPlaylist(user.id, { name: "Imported", trackIds: [good1, radioOnly, "missing-id", good2] }, seam());
+    expect(result.added).toBe(2);
+    expect(result.dropped).toEqual([radioOnly, "missing-id"]);
+    const items = await db.playlistItem.findMany({ where: { playlistId: result.id }, orderBy: { position: "asc" } });
+    expect(items.map((i) => i.trackId)).toEqual([good1, good2]);
+
+    // Removing the first item closes the gap.
+    await removeItem(result.id, user.id, good1, seam());
+    const after = await db.playlistItem.findMany({ where: { playlistId: result.id }, orderBy: { position: "asc" } });
+    expect(after.map((i) => i.position)).toEqual([0]);
+  });
+
+  it("name and description go through the textCheck hook; links and control characters are rejected locally", async () => {
+    const user = await db.user.create({ data: { email: "h302f@test.example" } });
+    await createPlaylist(user.id, { name: " Jazz & noise ", description: "любой скрипт — ok" }, seam());
+    expect(textCheckCalls).toContain(" Jazz & noise ");
+    expect(textCheckCalls).toContain("любой скрипт — ok");
+
+    await expect(createPlaylist(user.id, { name: "see https://spam.example/x" }, seam())).rejects.toMatchObject({ code: "TEXT_REJECTED" });
+    await expect(createPlaylist(user.id, { name: "bad\u0000name" }, seam())).rejects.toMatchObject({ code: "TEXT_REJECTED" });
+    await expect(createPlaylist(user.id, { name: "fine name", description: "call REJECTED-BY-CHECK now" }, seam())).rejects.toMatchObject({ code: "TEXT_REJECTED" });
   });
 });
