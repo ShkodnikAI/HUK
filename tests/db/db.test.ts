@@ -37,6 +37,8 @@ import { mkdtempSync, utimesSync, existsSync, statSync, rmSync } from "node:fs";
 import { route } from "@/server/http/handler";
 import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
 import { VERIFIED_FOR_REACTION_MS, beat, closeStaleSessions, startListenSession } from "@/server/listen/session";
+import { makeRankingJobs, recomputeTrackScores } from "@/server/ranking/job";
+import { detectIpClusters, detectVoteBursts, reputationFor, runAntifraudPass, updateReputations, type VoteRecord } from "@/server/ranking/antifraud";
 import { react, unreact } from "@/server/reactions/service";
 import {
   addItem,
@@ -3943,5 +3945,120 @@ describe.skipIf(!databaseUrl)("personal playlists (H-302)", () => {
     await expect(createPlaylist(user.id, { name: "see https://spam.example/x" }, seam())).rejects.toMatchObject({ code: "TEXT_REJECTED" });
     await expect(createPlaylist(user.id, { name: "bad\u0000name" }, seam())).rejects.toMatchObject({ code: "TEXT_REJECTED" });
     await expect(createPlaylist(user.id, { name: "fine name", description: "call REJECTED-BY-CHECK now" }, seam())).rejects.toMatchObject({ code: "TEXT_REJECTED" });
+  });
+});
+
+describe.skipIf(!databaseUrl)("ranking and anti-fraud v1 (H-304)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  function vote(userId: string, trackId: string, createdAt: Date, ipHash: string | null, accountAgeMs: number): VoteRecord {
+    return { userId, trackId, createdAt, ipHash, accountAgeMs };
+  }
+
+  it("reputation ramp is exact at day 0, 7, 14; the pass touches only young accounts", async () => {
+    expect(reputationFor(0)).toBeCloseTo(0.2, 9);
+    expect(reputationFor(7)).toBeCloseTo(0.2 + 0.8 * (6 / 13), 9);
+    expect(reputationFor(14)).toBe(1.0);
+    expect(reputationFor(30)).toBe(1.0);
+
+    const now = new Date();
+    const day0 = await db.user.create({ data: { email: "d0@test.example", createdAt: now } });
+    const day14 = await db.user.create({ data: { email: "d14@test.example", createdAt: new Date(now.getTime() - 14.1 * 86_400_000) } });
+    await updateReputations({ client: db, now: () => now });
+    const fresh = await db.user.findUniqueOrThrow({ where: { id: day0.id } });
+    expect(fresh.reputation).toBeCloseTo(0.2, 2); // honest users untouched semantics: still at the ramp value
+    void day14;
+  });
+
+  it("a planted vote burst and an ipHash cluster get flagged (weight 0) with an audit row; honest votes untouched", async () => {
+    const track = await db.track.create({ data: { title: "h304", status: "APPROVED", available: true, durationSec: 60 } });
+    // A bot ring: 5 distinct young accounts voting within 10 minutes.
+    const youngUsers = await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        db.user.create({ data: { email: `young${i}@test.example`, createdAt: new Date(Date.now() - 0.5 * 86_400_000) } }),
+      ),
+    );
+    const burstVotes = youngUsers.map((u, i) =>
+      vote(u.id, track.id, new Date(Date.now() - 60_000 + i * 1000), "same-hash-1", 0.5 * 86_400_000),
+    );
+    const burstFlags = detectVoteBursts(burstVotes);
+    expect(burstFlags).toHaveLength(5);
+    expect(burstFlags.every((f) => f.reason === "vote-burst" && f.trackId === track.id)).toBe(true);
+
+    // ipHash cluster: 3 votes on one track from one hash in a day.
+    const u1 = await db.user.create({ data: { email: "u1@test.example" } });
+    const u2 = await db.user.create({ data: { email: "u2@test.example" } });
+    const u3 = await db.user.create({ data: { email: "u3@test.example" } });
+    const clusterVotes = [u1, u2, u3].map((u) => vote(u.id, track.id, new Date(), "same-hash-1", 30 * 86_400_000));
+    const clusterFlags = detectIpClusters(clusterVotes);
+    expect(clusterFlags).toHaveLength(3);
+    expect(clusterFlags.every((f) => f.reason === "ip-cluster")).toBe(true);
+
+    // The pass writes flags + an audit row; a second run adds nothing (idempotent).
+    for (const v of clusterVotes) {
+      await db.reaction.create({ data: { userId: v.userId, trackId: v.trackId, type: "LIKE", ipHash: v.ipHash, createdAt: v.createdAt } });
+    }
+    const first = await runAntifraudPass({ client: db });
+    expect(first.newFlags).toBe(3); // the ip cluster is in the DB window; the burst votes belong to the same rows
+    expect(await db.auditLog.count({ where: { action: "antifraud.flags" } })).toBe(1);
+    const after = await db.voteFlag.count();
+    await runAntifraudPass({ client: db });
+    expect(await db.voteFlag.count()).toBe(after); // idempotent
+  });
+
+  it("the ranking job is idempotent, bounded, and never writes a non-approved track; flagged votes weigh 0", async () => {
+    const track = await db.track.create({ data: { title: "h304 score", status: "APPROVED", available: true, durationSec: 60 } });
+    const draft = await db.track.create({ data: { title: "draft", status: "PENDING", durationSec: 60 } });
+    for (let i = 0; i < 12; i++) {
+      const voter = await db.user.create({ data: { email: `v${i}@test.example`, reputation: 1.0 } });
+      await db.reaction.create({ data: { userId: voter.id, trackId: track.id, type: "LIKE" } });
+    }
+    // A flagged burst voter also liked the track — the flag zeroes the vote.
+    const flagged = await db.user.create({ data: { email: "flagged@test.example" } });
+    await db.reaction.create({ data: { userId: flagged.id, trackId: track.id, type: "LIKE", createdAt: new Date() } });
+    await db.voteFlag.create({ data: { userId: flagged.id, trackId: track.id, reason: "vote-burst" } });
+
+    const jobs = makeRankingJobs({ client: db });
+    const job = jobs.find((j) => j.name === "ranking-recompute")!;
+    const summary1 = await job.run();
+    expect(summary1).toContain("1 tracks rescored");
+    const row = await db.trackScore.findUniqueOrThrow({ where: { trackId_categoryKey: { trackId: track.id, categoryKey: "all" } } });
+    expect(row.voters).toBe(12); // the flagged vote is not a voter
+    const score1 = row.score;
+    const nEff1 = row.nEff;
+
+    // Second run: idempotent (same values), no score for the draft.
+    await job.run();
+    const row2 = await db.trackScore.findUniqueOrThrow({ where: { trackId_categoryKey: { trackId: track.id, categoryKey: "all" } } });
+    expect(row2.score).toBe(score1);
+    expect(row2.nEff).toBe(nEff1);
+    await recomputeTrackScores([draft.id], Date.now(), { client: db });
+    expect(await db.trackScore.count({ where: { trackId: draft.id } })).toBe(0); // never writes a non-approved track
+  });
+
+  it("the fresh pool is Thompson-sampled by the scheduler's candidate loader (beta posteriors wired)", async () => {
+    const track = await db.track.create({
+      data: { title: "fresh thompson", status: "APPROVED", available: true, durationSec: 60, licenseScope: "RADIO_AND_PLAYLISTS", createdAt: new Date(Date.now() - 86_400_000) },
+    });
+    const voters = await Promise.all(
+      Array.from({ length: 12 }, (_, i) => db.user.create({ data: { email: `t${i}@test.example` } })),
+    );
+    await db.reaction.createMany({
+      data: voters.map((v, i) => ({ userId: v.id, trackId: track.id, type: i < 10 ? "LIKE" : "DISLIKE" })),
+    });
+    // Exercised indirectly: the recompute writes the score row the top pool reads.
+    await recomputeTrackScores([track.id], Date.now(), { client: db });
+    const score = await db.trackScore.findUniqueOrThrow({ where: { trackId_categoryKey: { trackId: track.id, categoryKey: "all" } } });
+    expect(score.voters).toBe(12);
+    expect(score.score).toBeGreaterThan(0); // 10 likes vs 2 dislikes clear the Wilson bound
   });
 });

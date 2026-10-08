@@ -113,6 +113,7 @@ model User {
   role          Role      @default(LISTENER)
   locale        String    @default("en")
   reputation    Float     @default(1.0) // vote weight; derived by antifraud jobs
+  voteFlags     VoteFlag[]
   bannedUntil   DateTime?
   createdAt     DateTime  @default(now())
   deletedAt     DateTime?
@@ -249,6 +250,7 @@ model Track {
   listens      ListenEvent[]
   aggregates   ListenAggregate[]
   scores       TrackScore[]
+  voteFlags    VoteFlag[]
   chartEntries ChartEntry[]
   playlistItems PlaylistItem[]
   comments     Comment[]
@@ -419,6 +421,21 @@ model ListenAggregate {
   track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
 
   @@id([trackId, day])
+}
+
+// H-304 (anti-fraud v1): a flagged vote carries weight 0. Flags are an
+// internal moderation signal and are never exposed in any response.
+model VoteFlag {
+  userId    String
+  trackId   String
+  reason    String   // "vote-burst" | "ip-cluster"
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([userId, trackId, reason])
+  @@index([trackId])
 }
 
 model TrackScore {

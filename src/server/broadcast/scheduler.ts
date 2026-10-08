@@ -36,13 +36,14 @@ interface Candidate {
   id: string;
   durationSec: number;
   pool: PoolName;
+  beta?: { alpha: number; beta: number };
 }
 
 /** Tracks eligible for scheduling: S2 — only APPROVED and available. */
-async function loadCandidates(): Promise<Candidate[]> {
-  // top: highest TrackScore for categoryKey 'all' (empty until H-304);
-  // fresh: the newest approved tracks (FRESH_POOL_SIZE, assumption documented
-  // in the PR); rest: everything else.
+async function loadCandidates(nowMs: number): Promise<Candidate[]> {
+  // H-304: top = highest TrackScore for categoryKey 'all'; fresh = tracks
+  // younger than 14 days, chosen by Thompson sampling from
+  // Beta(likes + 1, dislikes + 1); rest = everything else.
   const topRows = await db.trackScore.findMany({
     where: { categoryKey: "all" },
     orderBy: { score: "desc" },
@@ -51,17 +52,37 @@ async function loadCandidates(): Promise<Candidate[]> {
   });
   const topIds = new Set(topRows.map((r) => r.trackId));
 
+  const youngEnough = new Date(nowMs);
+  youngEnough.setDate(youngEnough.getDate() - 14);
+
   const tracks = await db.track.findMany({
     where: { status: "APPROVED", available: true },
     orderBy: { createdAt: "desc" },
-    select: { id: true, durationSec: true },
+    select: { id: true, durationSec: true, createdAt: true },
   });
-  const freshIds = new Set(tracks.slice(0, FRESH_POOL_SIZE).map((t) => t.id));
+  const youngTracks = tracks.filter((t) => t.createdAt >= youngEnough);
+  const freshIds = new Set(youngTracks.map((t) => t.id));
+
+  // Beta posteriors for the young tracks (one grouped query).
+  const likes = await db.reaction.groupBy({
+    by: ["trackId", "type"],
+    where: { trackId: { in: youngTracks.length > 0 ? youngTracks.map((t) => t.id) : ["-"] } },
+    _count: { _all: true },
+  });
+  const betaByTrack = new Map<string, { alpha: number; beta: number }>();
+  for (const t of youngTracks) betaByTrack.set(t.id, { alpha: 1, beta: 1 });
+  for (const row of likes) {
+    const current = betaByTrack.get(row.trackId);
+    if (!current) continue;
+    if (row.type === "LIKE") current.alpha += row._count._all;
+    if (row.type === "DISLIKE") current.beta += row._count._all;
+  }
 
   return tracks.map((t) => ({
     id: t.id,
     durationSec: t.durationSec,
     pool: topIds.has(t.id) ? "top" : freshIds.has(t.id) ? "fresh" : "rest",
+    beta: betaByTrack.get(t.id),
   }));
 }
 
@@ -140,7 +161,7 @@ export function startScheduler(opts: SchedulerOptions = {}): SchedulerHandle {
       },
     });
 
-    const candidates = await loadCandidates();
+    const candidates = await loadCandidates(nowMs);
 
     // Walk the live timeline (chronological by startsAt) and find the first
     // uncovered moment: a hole left by endCurrentSlotEarly, or simply the end
