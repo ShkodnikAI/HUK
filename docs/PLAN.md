@@ -35,7 +35,7 @@ published only after the record is on `main`. Where a published issue differs fr
 | H-205 | #49 | W2 | merged (PR #65; disabled until D5) |
 | H-206 | #50 | W2 | merged (PR #64) |
 | H-207 | #51 | W2 | merged (PR #66) |
-| H-208 | #52 | W2 | open, waits for Owner decisions (providers, spend cap, D2) |
+| H-208 | #52 | W2 | open, rewritten 2026-10-08 (D13: AI escalates only; no provider chosen) |
 | H-210 | #53 | W2 | merged (PR #59) |
 | H-211 | #68 | W3 follow-up | open |
 | H-212 | #69 | W3 follow-up | open |
@@ -47,6 +47,9 @@ published only after the record is on `main`. Where a published issue differs fr
 | H-304 | #75 | W3 | open |
 | H-305 | #76 | W3 | open |
 | H-214 | #77 | W3 | open |
+| H-215 | #85 | W3 (moderation line) | open |
+| H-216 | #86 | W3 (moderation line) | open |
+| H-217 | #87 | W3 (moderation line) | open |
 
 ---
 
@@ -144,7 +147,7 @@ Done: only MODERATOR/ADMIN reach it; every action writes `AuditLog`.
 
 **H-111 — Compose usable again + Docker smoke job in CI.** `[core]` Issue #43. Finding F5.
 
-**H-208 — ASR and LLM adapters.** `[core]` `OD` Issue #52. Providers, spend cap and policy approval (D2) are Owner decisions.
+**H-208 — Moderation decision mode and provider-agnostic adapters.** `[core]` `OD` Issue #52. Rewritten 2026-10-08 under D13: the AI only escalates, LLM off by default, no provider chosen. The cloud transport (POST + auth header on the trusted door, a security change to S4) is NOT part of it and is published only when the Owner picks a provider.
 
 **H-209 — Invites and artist onboarding.** `[feature]` Issue #45.
 
@@ -187,6 +190,16 @@ Done: snapshot idempotent; categories under 20 tracks collapse to parent; cachea
 **H-213 — Hardening II (address classes, cost accounting, batched deletes).** `[security]` Issue #70. Findings G4-G6.
 
 **H-214 — Account export and deletion (S7).** `[security]` Issue #77.
+
+**Added 2026-10-08 (moderation line, decisions D12/D13):**
+
+**H-215 — Local speech recognition.** `[core]` Issue #85. A recogniser run as a child process of the worker on our own server (no third party, no network door); starts with a measured spike.
+
+**H-216 — Risk-sorted moderator queue, text flags, shadow-mode agreement report.** `[feature]` Issue #86. Measures AI vs human so that auto-decisions can be switched on later on evidence.
+
+**H-217 — Free-licence tracks.** `[feature]` `OD` Issue #87. The only way to submit a recording by someone else (D12: no "pirate" mode); always human-reviewed.
+
+**Not published (parked):** the cloud LLM transport (extend the trusted door with POST, request body and an auth header, add the provider host) — a security-class change to S4; written and published only after the Owner chooses a provider.
 
 **H-402 — Taxonomy** moved from W4 to W3 because charts (H-305) need categories. Issue #71.
 
