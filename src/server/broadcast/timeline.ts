@@ -1,6 +1,10 @@
 // Pure timeline math (H-104, ADR-0004): pool quota, no-repeat window, gapless
 // filling. No database, no clock, no globals — the RNG is injected so the
 // behaviour is property-testable and deterministic under a seed.
+// H-304: the fresh pool picks by Thompson sampling from Beta(likes+1,
+// dislikes+1) (betaSample is pure and imported from the ranking module).
+
+import { betaSample } from "@/server/ranking/signals";
 
 export type PoolName = "top" | "fresh" | "rest";
 
@@ -9,6 +13,11 @@ export interface SchedulableTrack {
   id: string;
   durationSec: number;
   pool: PoolName;
+  /**
+   * H-304: Beta(likes + 1, dislikes + 1) for the fresh pool's Thompson
+   * sampling. Absent → uniform pick within the pool (unchanged behaviour).
+   */
+  beta?: { alpha: number; beta: number };
 }
 
 export type Rng = () => number; // uniform [0, 1)
@@ -64,6 +73,20 @@ export function pickNext(opts: {
     for (const pool of quotaOrder(roll)) {
       const poolCandidates = byPool(pool, available);
       if (poolCandidates.length > 0) {
+        // H-304: the fresh pool picks by Thompson sampling from each
+        // track's Beta posterior; the other pools stay uniform.
+        if (pool === "fresh" && poolCandidates.some((t) => t.beta)) {
+          let best: SchedulableTrack | null = null;
+          let bestTheta = -1;
+          for (const track of poolCandidates) {
+            const theta = track.beta ? betaSample(track.beta.alpha, track.beta.beta, rng) : rng();
+            if (theta > bestTheta) {
+              best = track;
+              bestTheta = theta;
+            }
+          }
+          return best ?? poolCandidates[0];
+        }
         return poolCandidates[Math.floor(rng() * poolCandidates.length) % poolCandidates.length];
       }
     }

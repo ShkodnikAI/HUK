@@ -8,6 +8,7 @@ import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
 import { startMaintenance } from "@/server/maintenance/runner";
 import { sweepStaleTempFiles } from "@/server/sources/verify";
 import { runModerationPass } from "@/server/moderation/orchestrator";
+import { makeRankingJobs } from "@/server/ranking/job";
 
 const env = loadEnv();
 
@@ -49,7 +50,11 @@ const scheduler = startScheduler();
 console.log("[worker] maintenance jobs started (H-210)");
 // H-211 (G1): maintenance runs only while this process holds the broadcast
 // advisory lock; a follower idles and re-checks every tick.
-const maintenance = startMaintenance({ jobs: makeMaintenanceJobs(), isLeader: () => scheduler.isLeader() });
+// H-304: the ranking and anti-fraud jobs ride the same gated runner.
+const maintenance = startMaintenance({
+  jobs: [...makeMaintenanceJobs(), ...makeRankingJobs()],
+  isLeader: () => scheduler.isLeader(),
+});
 
 // H-204: the moderation cascade consumes PENDING tracks on a bounded tick.
 // Non-overlapping in-process (a pass never starts while one runs); a pass
