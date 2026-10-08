@@ -2692,7 +2692,7 @@ describe.skipIf(!databaseUrl)("reports and takedown (H-206)", () => {
 
   it("createReport triages, deduplicates per reporter+target and audits", async () => {
     const { trackId } = await approvedTrackWithSlots();
-    const first = await createReport({ targetType: "TRACK", targetId: trackId, reason: "this is a phishing scam" }, null);
+    const first = await createReport({ targetType: "TRACK", targetId: trackId, reason: "this is a phishing scam", reporterContact: "a@b.example" }, null);
     expect(first.deduped).toBe(false);
     const report = await db.report.findUniqueOrThrow({ where: { id: first.reportId } });
     expect(report.status).toBe("OPEN");
@@ -2702,8 +2702,9 @@ describe.skipIf(!databaseUrl)("reports and takedown (H-206)", () => {
     const again = await createReport({ targetType: "TRACK", targetId: trackId, reason: "scam", reporterContact: "a@b.example" }, null);
     expect(again.deduped).toBe(true);
     expect(await db.report.count()).toBe(1);
-    // A different reporter may report the same target.
-    const third = await createReport({ targetType: "TRACK", targetId: trackId, reason: "scam" }, "user-x");
+    // A different (real) reporter may report the same target.
+    const other = await db.user.create({ data: { email: `other-${Date.now()}@test.example` } });
+    const third = await createReport({ targetType: "TRACK", targetId: trackId, reason: "scam" }, other.id);
     expect(third.deduped).toBe(false);
     expect(await db.auditLog.count({ where: { action: "report.created" } })).toBe(2);
   });
@@ -2810,10 +2811,16 @@ describe.skipIf(!databaseUrl)("reports and takedown (H-206)", () => {
     );
     expect(await db.regionRestriction.count({ where: { trackId, countryCode: "DE" } })).toBe(1);
 
-    // Same body for everyone: identical bytes for two different countries.
+    // Same body for everyone: two GET requests with DIFFERENT country
+    // headers produce byte-identical bodies except serverTime (which differs
+    // between any two real requests by design).
+    const { GET: nowGet } = await import("@/app/api/radio/now/route");
+    const resA = await nowGet(new Request("http://localhost:3000/api/radio/now", { headers: { "cf-ipcountry": "DE" } }), { params: Promise.resolve({}) });
+    const resB = await nowGet(new Request("http://localhost:3000/api/radio/now", { headers: { "cf-ipcountry": "FR" } }), { params: Promise.resolve({}) });
+    const strip = (s: string) => s.replace(/"serverTime":\d+/, '"serverTime":0');
+    expect(strip(await resA.text())).toEqual(strip(await resB.text()));
+
     const a = await radioNow(Date.now(), db);
-    const b = await radioNow(Date.now(), db);
-    expect(JSON.stringify(a)).toEqual(JSON.stringify(b));
     const ids = [...(a.current ? [a.current.track.id] : []), ...a.next.map((s) => s.track.id)];
     expect(ids).toContain(trackId);
     const served = a.current?.track.id === trackId ? a.current.track : a.next.find((s) => s.track.id === trackId)!.track;
@@ -2824,7 +2831,8 @@ describe.skipIf(!databaseUrl)("reports and takedown (H-206)", () => {
     const moderator = await userWithSession("MODERATOR");
     const { trackId } = await approvedTrackWithSlots();
     const a = await createReport({ targetType: "TRACK", targetId: trackId, reason: "threats here" }, null);
-    const b = await createReport({ targetType: "TRACK", targetId: trackId, reason: "spam uploads" }, "other-reporter");
+    const otherUser = await db.user.create({ data: { email: `queue-${Date.now()}@test.example` } });
+    const b = await createReport({ targetType: "TRACK", targetId: trackId, reason: "spam uploads" }, otherUser.id);
     void b;
     const queue = await listOpenReports({ client: db });
     expect(queue.map((r) => r.id)).toContain(a.reportId);
