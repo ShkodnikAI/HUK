@@ -9,11 +9,16 @@
 //
 // The ledger is the only accounting surface: `day` is UTC midnight, one row
 // per (day, provider), `costMicroUsd` is the running reserved+settled total,
-// `calls` counts guard invocations. A failed call (fn throws) releases its
-// reservation — the provider was not successfully billed end-to-end.
+// `calls` counts guard invocations. A failed call releases its reservation
+// ONLY when the adapter certifies the request could not be billed
+// (NotChargedError: DNS/connect failure, local validation, 4xx before
+// processing); every other failure keeps the reservation — conservative,
+// because the provider may already have charged — and the call is recorded
+// as `uncertain` in the log and the audit trail (H-213, G5).
 
 import { loadEnv, type Env } from "@/server/env";
 import { db as defaultDb } from "@/server/db";
+import { audit } from "@/server/audit";
 
 /** Thrown when a reservation would push the day (or provider) over its cap. */
 export class BudgetExceeded extends Error {
@@ -25,6 +30,22 @@ export class BudgetExceeded extends Error {
     this.name = "BudgetExceeded";
     this.provider = provider;
     this.attemptedMicroUsd = attemptedMicroUsd;
+  }
+}
+
+/**
+ * Thrown by provider adapters ONLY for failures that happen before a
+ * request could be billed: a DNS/connect failure, local validation, or a
+ * 4xx answered before any processing. `guard` refunds the reservation for
+ * this error and nothing else (H-213, G5).
+ */
+export class NotChargedError extends Error {
+  readonly provider: string;
+
+  constructor(provider: string, detail: string) {
+    super(`NotChargedError (${provider}): ${detail}`);
+    this.name = "NotChargedError";
+    this.provider = provider;
   }
 }
 
@@ -69,7 +90,8 @@ function utcMidnight(now: Date): Date {
  * one transaction (pg advisory xact lock on the day → no two concurrent
  * guards can both pass a cap that only one fits); `fn` then runs outside the
  * transaction and returns the actual cost; a second transaction settles the
- * difference. If `fn` throws, the reservation is released (settled to 0).
+ * difference. If `fn` throws NotChargedError the reservation is refunded;
+ * any other failure keeps it and the call is logged as `uncertain` (G5).
  */
 export async function guard<T>(
   opts: GuardOptions,
@@ -135,13 +157,31 @@ export async function guard<T>(
     }
     return result;
   } catch (e) {
-    // The call did not complete: release the reservation. A BudgetExceeded
-    // thrown by fn itself is re-thrown untouched (it already stopped work).
-    await client.budgetLedger.update({
-      where: { day_provider: { day, provider: opts.provider } },
-      data: { costMicroUsd: { decrement: BigInt(Math.round(opts.estimateMicroUsd)) } },
+    if (e instanceof NotChargedError) {
+      // The adapter certifies the request could not be billed: refund the
+      // reservation (H-213, G5).
+      await client.budgetLedger.update({
+        where: { day_provider: { day, provider: opts.provider } },
+        data: { costMicroUsd: { decrement: BigInt(Math.round(opts.estimateMicroUsd)) } },
+      }).catch(() => {
+        /* the ledger row must exist (created above); nothing else to do */
+      });
+      throw e;
+    }
+    // Conservative (H-213, G5): any other failure — a timeout after send, a
+    // truncated body, an unknown error — keeps the reservation, because the
+    // provider may already have charged. The call is recorded as `uncertain`
+    // (loud log + best-effort audit row; the ledger has no payload column).
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error(`[budget] UNCERTAIN charge for ${opts.provider}: reservation ${opts.estimateMicroUsd} micro USD kept — ${detail.slice(0, 200)}`);
+    await audit({
+      actorKind: "worker",
+      action: "budget.uncertain",
+      targetType: "BudgetLedger",
+      targetId: opts.provider,
+      payload: { provider: opts.provider, estimateMicroUsd: opts.estimateMicroUsd, day: day.toISOString().slice(0, 10), error: detail.slice(0, 300) },
     }).catch(() => {
-      /* the ledger row must exist (created above); nothing else to do */
+      /* best-effort: the reservation itself already covers the risk */
     });
     throw e;
   }
