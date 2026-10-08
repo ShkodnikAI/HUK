@@ -9,6 +9,10 @@ import {
   serverNow,
   shouldResyncOnOnline,
   shouldResyncOnVisibility,
+  STANDBY_FIRST_MS,
+  STANDBY_JITTER,
+  STANDBY_NEXT_MS,
+  standbyBackoffMs,
 } from "@/lib/sync/clock";
 
 // H-105 contract tests: skew, drift correction, seek offset and adaptive
@@ -50,18 +54,40 @@ describe("seek offset (H-105)", () => {
   });
 });
 
-describe("adaptive polling (H-105)", () => {
-  it("polls at min(30 s, time until the slot ends) plus a small buffer", () => {
+describe("adaptive polling (H-105, cap lowered to 10 s by H-212/G3)", () => {
+  it("polls at min(10 s, time until the slot ends) plus a small buffer", () => {
     const nowServer = 1_000_000;
     expect(nextPollDelayMs(nowServer, nowServer + 5_000)).toBe(5_250);
     expect(nextPollDelayMs(nowServer, nowServer + 60_000)).toBe(MAX_POLL_INTERVAL_MS);
   });
 
-  it("floors at 1 s and polls fast when nothing is playing", () => {
+  it("floors at 1 s for a slot about to end", () => {
     const nowServer = 1_000_000;
     expect(nextPollDelayMs(nowServer, nowServer + 100)).toBe(MIN_POLL_INTERVAL_MS);
-    expect(nextPollDelayMs(nowServer, null)).toBe(MIN_POLL_INTERVAL_MS);
     expect(nextPollDelayMs(nowServer, nowServer - 5_000)).toBe(MIN_POLL_INTERVAL_MS);
+  });
+});
+
+describe("standby backoff (H-212, G3)", () => {
+  it("backs off 2 s after the first empty poll, 5 s afterwards (no jitter)", () => {
+    expect(standbyBackoffMs(1, () => 0.5)).toBe(STANDBY_FIRST_MS);
+    expect(standbyBackoffMs(2, () => 0.5)).toBe(STANDBY_NEXT_MS);
+    expect(standbyBackoffMs(10, () => 0.5)).toBe(STANDBY_NEXT_MS);
+  });
+
+  it("stays within ±20 % jitter bounds over many draws", () => {
+    let seed = 42;
+    const rng = (): number => {
+      // xorshift-ish deterministic generator
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    };
+    for (let n = 1; n <= 200; n++) {
+      const delay = standbyBackoffMs(n, rng);
+      const base = n <= 1 ? STANDBY_FIRST_MS : STANDBY_NEXT_MS;
+      expect(delay).toBeGreaterThanOrEqual(Math.round(base * (1 - STANDBY_JITTER)));
+      expect(delay).toBeLessThanOrEqual(Math.round(base * (1 + STANDBY_JITTER)));
+    }
   });
 });
 
