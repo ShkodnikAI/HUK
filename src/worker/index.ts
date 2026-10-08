@@ -7,6 +7,7 @@ import { startScheduler } from "@/server/broadcast/scheduler";
 import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
 import { startMaintenance } from "@/server/maintenance/runner";
 import { sweepStaleTempFiles } from "@/server/sources/verify";
+import { runModerationPass } from "@/server/moderation/orchestrator";
 
 const env = loadEnv();
 
@@ -18,12 +19,21 @@ if (swept > 0) console.log(`[worker] swept ${swept} stale moderation temp dirs`)
 
 let stopping = false;
 
+/** In-flight moderation pass, awaited on shutdown so a download finishes. */
+let moderationInFlight: Promise<unknown> | null = null;
+
 async function shutdown(signal: string): Promise<void> {
   if (stopping) return;
   stopping = true;
   console.log(`[worker] ${signal} received — stopping scheduler`);
   await scheduler.stop(); // releases the advisory lock
   await maintenance.stop();
+  clearInterval(moderationTimer);
+  try {
+    await moderationInFlight;
+  } catch {
+    /* the pass logs its own failures */
+  }
   console.log("[worker] exiting cleanly");
   process.exit(0);
 }
@@ -38,6 +48,23 @@ const scheduler = startScheduler();
 // process, sequentially and non-overlapping (S7).
 console.log("[worker] maintenance jobs started (H-210)");
 const maintenance = startMaintenance({ jobs: makeMaintenanceJobs() });
+
+// H-204: the moderation cascade consumes PENDING tracks on a bounded tick.
+// Non-overlapping in-process (a pass never starts while one runs); a pass
+// with no eligible work costs one cheap DB query and is not audited.
+const MODERATION_TICK_MS = 30_000;
+const moderationTimer = setInterval(() => {
+  if (stopping || moderationInFlight) return;
+  moderationInFlight = runModerationPass({ limit: 5, concurrency: 3 })
+    .then((summary) => {
+      if (summary.eligible > 0) console.log(`[moderation] pass: ${JSON.stringify(summary)}`);
+    })
+    .catch((e) => console.error(`[moderation] pass failed: ${e instanceof Error ? e.message : String(e)}`))
+    .finally(() => {
+      moderationInFlight = null;
+    });
+}, MODERATION_TICK_MS);
+moderationTimer.unref?.();
 
 void scheduler.done().then(() => {
   console.log("[worker] scheduler stopped; lock released");
