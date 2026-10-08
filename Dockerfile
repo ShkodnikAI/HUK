@@ -43,10 +43,18 @@ CMD ["bun", "run", "start"]
 FROM oven/bun:1-slim AS worker
 WORKDIR /app
 ENV NODE_ENV=production
+# H-204: the moderation technical stage needs ffprobe/ffmpeg. Worker image
+# only — the web image stays minimal (attack surface, image size).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=deps --chown=bun:bun /app/node_modules ./node_modules
 COPY --from=builder --chown=bun:bun /app/prisma ./prisma
 COPY --chown=bun:bun package.json tsconfig.json ./
 COPY --chown=bun:bun src/worker ./src/worker
 COPY --chown=bun:bun src/server ./src/server
+# H-204: the policy loader reads this at start-up and fails loud when
+# missing (S9); the file also pins the policyVersion hashed into runs.
+COPY --chown=bun:bun policy ./policy
 USER bun
 CMD ["bun", "run", "worker"]
