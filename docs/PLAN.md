@@ -11,7 +11,7 @@ published only after the record is on `main`. Where a published issue differs fr
 
 ## Index of published naryads (maintained by the Auditor; source of truth for publishing)
 
-| Card | Issue | Wave | State (2026-10-07, after gate W1) |
+| Card | Issue | Wave | State (2026-10-08, after gate W2) |
 |---|---|---|---|
 | H-001 | #2 | W0 | merged (PR #12) |
 | H-002 | #3 | W0 | merged (PR #15; record corrected in PR #20) |
@@ -25,18 +25,28 @@ published only after the record is on `main`. Where a published issue differs fr
 | H-104 | #26 | W1 | merged (PR #36, fix #37) |
 | H-105 | #27 | W1 | merged (PR #40) |
 | H-106 | #28 | W1 | merged (PR #38) |
-| H-110 | #42 | W2 | open |
-| H-111 | #43 | W2 | open |
-| H-201 | #44 | W2 | open |
-| H-209 | #45 | W2 | open |
-| H-202 | #46 | W2 | open |
-| H-203 | #47 | W2 | open |
-| H-204 | #48 | W2 | open |
-| H-205 | #49 | W2 | open |
-| H-206 | #50 | W2 | open |
-| H-207 | #51 | W2 | open |
-| H-208 | #52 | W2 | open |
-| H-210 | #53 | W2 | open |
+| H-110 | #42 | W2 | merged (PR #55) |
+| H-111 | #43 | W2 | merged (PR #56) |
+| H-201 | #44 | W2 | merged (PR #58) |
+| H-209 | #45 | W2 | merged (PR #60) |
+| H-202 | #46 | W2 | merged (PR #61) |
+| H-203 | #47 | W2 | merged (PR #62) |
+| H-204 | #48 | W2 | merged (PR #63) |
+| H-205 | #49 | W2 | merged (PR #65; disabled until D5) |
+| H-206 | #50 | W2 | merged (PR #64) |
+| H-207 | #51 | W2 | merged (PR #66) |
+| H-208 | #52 | W2 | open, waits for Owner decisions (providers, spend cap, D2) |
+| H-210 | #53 | W2 | merged (PR #59) |
+| H-211 | #68 | W3 follow-up | open |
+| H-212 | #69 | W3 follow-up | open |
+| H-213 | #70 | W3 follow-up | open |
+| H-402 | #71 | W3 (pulled forward from W4) | open, waits for Owner confirmation of the vocabulary |
+| H-301 | #72 | W3 | open |
+| H-302 | #73 | W3 | open |
+| H-303 | #74 | W3 | open, publication policy default (a) |
+| H-304 | #75 | W3 | open |
+| H-305 | #76 | W3 | open |
+| H-214 | #77 | W3 | open |
 
 ---
 
@@ -167,6 +177,18 @@ Scope: top-100 per category with thresholds, weekly snapshot job, scheduler quot
 Done: snapshot idempotent; categories under 20 tracks collapse to parent; cacheable GETs.
 
 ---
+
+**Added at gate W2** (see `docs/audits/2026-10-08-gate-W2.md`):
+
+**H-211 — Worker leadership for moderation and maintenance, per-track claim.** `[security]` Issue #68. Finding G1.
+
+**H-212 — Retire tracks from the air on every path, scheduler self-heal, player error handling.** `[security]` Issue #69. Findings G2, G3.
+
+**H-213 — Hardening II (address classes, cost accounting, batched deletes).** `[security]` Issue #70. Findings G4-G6.
+
+**H-214 — Account export and deletion (S7).** `[security]` Issue #77.
+
+**H-402 — Taxonomy** moved from W4 to W3 because charts (H-305) need categories. Issue #71.
 
 ## W4 — Artists and taxonomy (P1)
 
