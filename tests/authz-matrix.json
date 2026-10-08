@@ -142,6 +142,17 @@
         "ADMIN": 200,
         "banned": 200
       }
+    },
+    "/api/mod/tracks/resolve": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 403,
+        "ARTIST": 403,
+        "MODERATOR": 400,
+        "ADMIN": 400,
+        "banned": 403
+      }
     }
   }
 }

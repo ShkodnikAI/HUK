@@ -26,6 +26,8 @@ import { MockAsrAdapter, type MockAsrConfig } from "@/server/moderation/adapters
 import { MockLlmAdapter, type MockLlmConfig } from "@/server/moderation/adapters/llm";
 import { createReport, listOpenReports, resolveReport, resolveSchema } from "@/server/reports/service";
 import { takedownTrack } from "@/server/tracks/takedown";
+import { moderatorActionSchema, moderatorTrackAction } from "@/server/tracks/moderator-actions";
+import { loadModerationQueue } from "@/app/[locale]/mod/page";
 import { resolveAudiusTrack } from "@/server/sources/audius";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -2883,5 +2885,152 @@ describe.skipIf(!databaseUrl)("reports and takedown (H-206)", () => {
     expect(((await geo.json()) as { country: string }).country).toBe("DE");
     const geoNoHeader = await GET(new Request("http://localhost:3000/api/geo"), { params: Promise.resolve({}) });
     expect(((await geoNoHeader.json()) as { country: string | null }).country).toBeNull();
+  });
+});
+
+// ───────────────────────── H-207: moderator console data + decisions ─────────────────────────
+
+describe.skipIf(!databaseUrl)("moderator console (H-207)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  async function moderatorUser(): Promise<User> {
+    return db.user.create({
+      data: { email: `mod-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.example`, role: "MODERATOR" },
+    });
+  }
+
+  /** A queued track: PENDING with the HUMAN/REVIEW marker and pipeline evidence. */
+  async function queuedTrack(opts?: { transcript?: string; strongMatch?: boolean; bestScore?: number }): Promise<string> {
+    const track = await db.track.create({
+      data: {
+        title: "queued track",
+        status: "PENDING",
+        durationSec: 90,
+        instrumental: false,
+        language: "en",
+        rightsDeclaredAt: new Date(),
+        humanContribution: "vocals",
+        aiSummary: "no violation",
+        aiConfidence: 0.9,
+      },
+    });
+    await db.moderationRun.createMany({
+      data: [
+        { trackId: track.id, stage: "TECHNICAL", verdict: "PASS", payload: { durationSec: 90 }, policyVersion: "sha256:abc" },
+        {
+          trackId: track.id,
+          stage: "FINGERPRINT",
+          verdict: "PASS",
+          payload: { strongMatch: opts?.strongMatch ?? false, bestScore: opts?.bestScore ?? 0.1, recording: { id: "rec-9", title: "x" } },
+          policyVersion: "sha256:abc",
+        },
+        {
+          trackId: track.id,
+          stage: "ASR",
+          verdict: "PASS",
+          payload: opts?.transcript ? { transcript: opts.transcript, language: "en" } : { language: "en" },
+          policyVersion: "sha256:abc",
+        },
+        { trackId: track.id, stage: "POLICY", verdict: "APPROVE", confidence: 0.9, payload: { summary: "no violation" }, costMicroUsd: 120, policyVersion: "sha256:abc" },
+        { trackId: track.id, stage: "HUMAN", verdict: "REVIEW", payload: { note: "awaiting human review" }, policyVersion: "sha256:abc" },
+      ],
+    });
+    await db.auditLog.create({
+      data: { actorKind: "worker", action: "moderation.review-queued", targetType: "Track", targetId: track.id, payload: {} },
+    });
+    return track.id;
+  }
+
+  it("loadModerationQueue returns only PENDING tracks whose latest run is the HUMAN marker, with evidence", async () => {
+    const queued = await queuedTrack({ transcript: "spoken words in the track", bestScore: 0.15 });
+    // Not queued: HUMAN marker missing, wrong status.
+    const pendingNoHuman = await db.track.create({ data: { title: "no human marker", status: "PENDING", durationSec: 60 } });
+    await db.moderationRun.create({ data: { trackId: pendingNoHuman.id, stage: "TECHNICAL", verdict: "PASS", payload: {} } });
+    await db.track.create({ data: { title: "already approved", status: "APPROVED", durationSec: 60 } });
+
+    const queue = await loadModerationQueue(db);
+    expect(queue.map((q) => q.trackId)).toEqual([queued]);
+    const item = queue[0];
+    expect(item.transcript).toBe("spoken words in the track");
+    expect(item.fingerprint).toMatchObject({ strongMatch: false, bestScore: 0.15 });
+    expect(item.costMicroUsd).toBe(120);
+    expect(item.policyVersion).toBe("sha256:abc");
+    expect(item.aiSummary).toBe("no violation");
+    expect(item.audits.map((a) => a.action)).toContain("moderation.review-queued");
+  });
+
+  it("moderator APPROVE: PENDING -> APPROVED, HUMAN/APPROVE run, audit row with the actor", async () => {
+    const moderator = await moderatorUser();
+    const trackId = await queuedTrack();
+    const res = await moderatorTrackAction({ trackId, action: "APPROVE" }, moderator, { client: db });
+    expect(res.status).toBe("APPROVED");
+    expect((await db.track.findUniqueOrThrow({ where: { id: trackId } })).status).toBe("APPROVED");
+    const run = await db.moderationRun.findFirstOrThrow({ where: { trackId, stage: "HUMAN" }, orderBy: { createdAt: "desc" } });
+    expect(run.verdict).toBe("APPROVE");
+    expect(JSON.stringify(run.payload)).toContain(moderator.id);
+    expect(await db.auditLog.count({ where: { action: "track.moderator-approved", targetId: trackId, actorId: moderator.id } })).toBe(1);
+  });
+
+  it("moderator REJECT requires a reason, writes the statement of reasons for the author (via /tracks/mine plumbing) and audits", async () => {
+    const moderator = await moderatorUser();
+    const trackId = await queuedTrack();
+
+    expect(moderatorActionSchema.safeParse({ trackId, action: "REJECT" }).success).toBe(false); // no reason -> rejected
+
+    const res = await moderatorTrackAction({ trackId, action: "REJECT", reason: "Repeated copyright violation." }, moderator, { client: db });
+    expect(res.status).toBe("REJECTED");
+    expect((await db.track.findUniqueOrThrow({ where: { id: trackId } })).status).toBe("REJECTED");
+    // The statement of reasons is a resolved report on the track — the same
+    // plumbing GET /api/tracks/mine reads (H-203/H-206), visible to nobody else.
+    const statement = await db.report.findFirstOrThrow({ where: { targetType: "TRACK", targetId: trackId, resolution: { not: null } } });
+    expect(statement.resolution).toBe("Repeated copyright violation.");
+    expect(statement.resolvedById).toBe(moderator.id);
+    expect(statement.status).toBe("ACTIONED");
+    expect(await db.auditLog.count({ where: { action: "track.moderator-rejected", targetId: trackId, actorId: moderator.id } })).toBe(1);
+  });
+
+  it("moderator RESTRICT adds the region restriction and audits it", async () => {
+    const moderator = await moderatorUser();
+    const trackId = await queuedTrack();
+    const res = await moderatorTrackAction(
+      { trackId, action: "RESTRICT", reason: "Legal order, country-level restriction.", countryCode: "DE" },
+      moderator,
+      { client: db },
+    );
+    expect(res.status).toBe("PENDING"); // the track stays pending, restricted for DE
+    expect(await db.regionRestriction.count({ where: { trackId, countryCode: "DE" } })).toBe(1);
+    expect(await db.auditLog.count({ where: { action: "track.region-restricted", targetId: trackId, actorId: moderator.id } })).toBe(1);
+  });
+
+  it("only PENDING tracks are decidable: 409 on an APPROVED track, 404 on an unknown one", async () => {
+    const moderator = await moderatorUser();
+    const approved = await db.track.create({ data: { title: "approved", status: "APPROVED", durationSec: 60 } });
+    await expect(moderatorTrackAction({ trackId: approved.id, action: "APPROVE" }, moderator, { client: db })).rejects.toMatchObject({ status: 409 });
+    await expect(moderatorTrackAction({ trackId: "no-such-track", action: "APPROVE" }, moderator, { client: db })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("the resolve API route is wired: body-less POST from a moderator answers 400 (matrix row 400/403/401 proven in the authz matrix)", async () => {
+    const moderator = await moderatorUser();
+    const { POST } = await import("@/app/api/mod/tracks/resolve/route");
+    const res = await POST(
+      new Request("http://localhost:3000/api/mod/tracks/resolve", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost:3000", cookie: `next-auth.session-token=tok-${moderator.id}` },
+        body: JSON.stringify({ trackId: "x", action: "APPROVE" }),
+      }),
+      { params: Promise.resolve({}) },
+    );
+    // The track does not exist in this fixture: the handler passed auth and
+    // validation and failed at the service layer with 404.
+    expect(res.status).toBe(404);
   });
 });
