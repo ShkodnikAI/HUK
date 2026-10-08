@@ -119,6 +119,27 @@ export function startScheduler(opts: SchedulerOptions = {}): SchedulerHandle {
 
   async function leaderTick(): Promise<void> {
     const nowMs = now();
+
+    // H-212 (G2/G3) self-heal, every tick: drop orphan slots of tracks that
+    // are no longer public (not APPROVED or unavailable). The live slot ends
+    // now, future slots are deleted; the normal fill below repairs the hole
+    // in the same tick. Safety net for paths nobody remembers.
+    const nowDate = new Date(nowMs);
+    await db.broadcastSlot.updateMany({
+      where: {
+        startsAt: { lte: nowDate },
+        endsAt: { gt: nowDate },
+        track: { OR: [{ status: { not: "APPROVED" } }, { available: false }] },
+      },
+      data: { endsAt: nowDate },
+    });
+    await db.broadcastSlot.deleteMany({
+      where: {
+        startsAt: { gt: nowDate },
+        track: { OR: [{ status: { not: "APPROVED" } }, { available: false }] },
+      },
+    });
+
     const candidates = await loadCandidates();
 
     // Walk the live timeline (chronological by startsAt) and find the first
