@@ -98,6 +98,50 @@
         "ADMIN": 403,
         "banned": 403
       }
+    },
+    "/api/reports": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 400,
+        "LISTENER": 400,
+        "ARTIST": 400,
+        "MODERATOR": 400,
+        "ADMIN": 400,
+        "banned": 400
+      }
+    },
+    "/api/mod/reports": {
+      "method": "GET",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 403,
+        "ARTIST": 403,
+        "MODERATOR": 200,
+        "ADMIN": 200,
+        "banned": 403
+      }
+    },
+    "/api/mod/reports/resolve": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 403,
+        "ARTIST": 403,
+        "MODERATOR": 400,
+        "ADMIN": 400,
+        "banned": 403
+      }
+    },
+    "/api/geo": {
+      "method": "GET",
+      "expected": {
+        "anonymous": 200,
+        "LISTENER": 200,
+        "ARTIST": 200,
+        "MODERATOR": 200,
+        "ADMIN": 200,
+        "banned": 200
+      }
     }
   }
 }
