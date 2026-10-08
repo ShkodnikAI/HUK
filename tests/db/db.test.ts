@@ -2817,7 +2817,9 @@ describe.skipIf(!databaseUrl)("reports and takedown (H-206)", () => {
     const { GET: nowGet } = await import("@/app/api/radio/now/route");
     const resA = await nowGet(new Request("http://localhost:3000/api/radio/now", { headers: { "cf-ipcountry": "DE" } }), { params: Promise.resolve({}) });
     const resB = await nowGet(new Request("http://localhost:3000/api/radio/now", { headers: { "cf-ipcountry": "FR" } }), { params: Promise.resolve({}) });
-    const strip = (s: string) => s.replace(/"serverTime":\d+/, '"serverTime":0');
+    // serverTime and offsetMs advance with wall-clock time by design; every
+    // other byte must be identical.
+    const strip = (s: string) => s.replace(/"serverTime":\d+/, '"serverTime":0').replace(/"offsetMs":\d+/, '"offsetMs":0');
     expect(strip(await resA.text())).toEqual(strip(await resB.text()));
 
     const a = await radioNow(Date.now(), db);
