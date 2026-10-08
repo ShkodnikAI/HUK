@@ -4,8 +4,9 @@
 
 /** Drift beyond this threshold triggers a seek back to the expected offset. */
 export const DRIFT_CORRECTION_MS = 3000;
-/** The player never polls more rarely than this. */
-export const MAX_POLL_INTERVAL_MS = 30_000;
+/** The player never polls more rarely than this while playing (H-212: G3 —
+ * a takedown reaches a playing listener within this window). */
+export const MAX_POLL_INTERVAL_MS = 10_000;
 /** The player never polls more often than this (server/cache courtesy). */
 export const MIN_POLL_INTERVAL_MS = 1_000;
 
@@ -44,17 +45,32 @@ export function needsDriftCorrection(
 }
 
 /**
- * Delay until the next `/api/radio/now` poll: `min(30 s, endsAt − now)` with
- * a small buffer past the slot end, floored at 1 s. `null` endsAt (nothing
- * playing) polls at the minimum so the player recovers quickly.
+ * Delay until the next `/api/radio/now` poll while a slot is playing:
+ * `min(10 s, endsAt − now)` with a small buffer past the slot end, floored
+ * at 1 s. Standby (no current slot) uses `standbyBackoffMs` instead.
  */
 export function nextPollDelayMs(
   nowServer: number,
-  currentEndsAt: number | null,
+  currentEndsAt: number,
   maxMs: number = MAX_POLL_INTERVAL_MS,
 ): number {
-  if (currentEndsAt === null) return MIN_POLL_INTERVAL_MS;
   return Math.max(MIN_POLL_INTERVAL_MS, Math.min(maxMs, currentEndsAt - nowServer + 250));
+}
+
+/** H-212 (G3): standby backoff when `current === null` — 2 s after the first
+ * empty poll, 5 s afterwards, each with ±20 % jitter so clients don't sync
+ * into a poll stampede. */
+export const STANDBY_FIRST_MS = 2_000;
+export const STANDBY_NEXT_MS = 5_000;
+export const STANDBY_JITTER = 0.2;
+
+export function standbyBackoffMs(
+  consecutiveEmptyPolls: number,
+  rng: () => number = Math.random,
+): number {
+  const base = consecutiveEmptyPolls <= 1 ? STANDBY_FIRST_MS : STANDBY_NEXT_MS;
+  const jitter = 1 + (rng() * 2 - 1) * STANDBY_JITTER;
+  return Math.round(base * jitter);
 }
 
 /** Re-sync policy: fetch immediately when the tab becomes visible again. */

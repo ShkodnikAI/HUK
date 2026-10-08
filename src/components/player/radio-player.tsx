@@ -10,15 +10,25 @@ import {
   serverNow,
   shouldResyncOnOnline,
   shouldResyncOnVisibility,
+  standbyBackoffMs,
   type ServerSlot,
 } from "@/lib/sync/clock";
+import {
+  isStale,
+  registerFailure,
+  slotKey,
+  watchPlaybackFailures,
+  type FailureState,
+} from "@/lib/sync/playback";
 import { applyRestrictions, type RadioNowResponse } from "@/lib/radio/contract";
 
 // The persistent radio player (H-105): one <audio> element mounted in the
 // root locale layout so it survives navigation. Polls /api/radio/now
-// adaptively (min(30 s, endsAt − now)), syncs to the server clock (skew),
-// corrects drift > 3 s by seeking, re-syncs on visibilitychange/online and
-// exposes Media Session metadata with play/pause (no seek — live radio).
+// adaptively (min(10 s, endsAt − now) while playing; standby backs off
+// 2 s → 5 s with jitter), syncs to the server clock (skew), corrects
+// drift > 3 s by seeking, re-syncs on visibilitychange/online, retries a
+// failing slot at most twice (H-212, G3) and exposes Media Session
+// metadata with play/pause (no seek — live radio).
 
 type Mode = "radio" | "playlist";
 
@@ -37,6 +47,11 @@ export function RadioPlayer() {
   const [playing, setPlaying] = useState(false);
   const [nowTitle, setNowTitle] = useState<string | null>(null);
   const stoppedRef = useRef(false);
+  // H-212 (G3): per-slot retry budget and standby backoff state.
+  const failedRef = useRef<FailureState | null>(null);
+  const emptyPollsRef = useRef(0);
+  const pollNowRef = useRef<() => void>(() => {});
+  const [playbackFailed, setPlaybackFailed] = useState(false);
 
   // H-206: the listener's country is fetched once (uncached /api/geo) and
   // combined with the shared /now body client-side — the timeline stays
@@ -68,6 +83,14 @@ export function RadioPlayer() {
     const audio = audioRef.current;
     if (!audio) return;
 
+    // H-212 (G3): the retry budget is per slot — a different (or absent)
+    // slot clears the failure state, the player starts clean.
+    const key = current ? slotKey(current.startsAt, current.endsAt) : null;
+    if (isStale(failedRef.current, key)) {
+      failedRef.current = null;
+      setPlaybackFailed(false);
+    }
+
     if (!current) {
       // Nothing scheduled: stay on standby.
       setNowTitle(null);
@@ -77,12 +100,17 @@ export function RadioPlayer() {
       return;
     }
 
+    emptyPollsRef.current = 0; // a slot is playing again
     setNowTitle(`${current.track.title}${current.track.artist ? ` — ${current.track.artist}` : ""}`);
 
     const wanted = new URL(current.track.audioUrl, window.location.origin).toString();
-    if (audio.src !== wanted) {
+    // A pending retry for THIS slot forces a fresh load attempt even though
+    // the URL is unchanged (the element failed once already).
+    const retrying = failedRef.current !== null && failedRef.current.key === key;
+    if (audio.src !== wanted || retrying) {
       audio.src = wanted;
       audio.currentTime = expectedOffsetMs({ startsAt: current.startsAt, endsAt: current.endsAt }, nowServer) / 1000;
+      if (retrying) audio.load();
       if (playing) void audio.play().catch(() => {});
     }
 
@@ -98,7 +126,8 @@ export function RadioPlayer() {
     }
   }, [playing]);
 
-  // Poll loop: adaptive delay from the pure helper; also re-syncs on
+  // Poll loop: adaptive delay from the pure helper; standby (current ===
+  // null) backs off 2 s then 5 s with ±20 % jitter; also re-syncs on
   // visibilitychange and online.
   useEffect(() => {
     stoppedRef.current = false;
@@ -112,10 +141,10 @@ export function RadioPlayer() {
           const data = (await res.json()) as RadioNowResponse;
           applyTimeline(data);
           const nowServer = serverNow(Date.now(), skewRef.current);
-          const delay = nextPollDelayMs(
-            nowServer,
-            currentRef.current ? currentRef.current.endsAt : null,
-          );
+          const slot = currentRef.current;
+          const delay = slot
+            ? nextPollDelayMs(nowServer, slot.endsAt)
+            : standbyBackoffMs(++emptyPollsRef.current);
           timer = setTimeout(() => void poll(), delay);
           return;
         }
@@ -123,6 +152,13 @@ export function RadioPlayer() {
         // network hiccup — retry at the minimum delay
       }
       timer = setTimeout(() => void poll(), 1000);
+    };
+
+    // H-212 (G3): playback failures re-poll immediately instead of waiting
+    // for the next scheduled poll.
+    pollNowRef.current = () => {
+      if (timer) clearTimeout(timer);
+      void poll();
     };
 
     const onVisibility = (): void => {
@@ -145,6 +181,28 @@ export function RadioPlayer() {
       window.removeEventListener("online", onOnline);
     };
   }, [applyTimeline]);
+
+  // H-212 (G3): audio error / stall > 10 s re-polls /now immediately; the
+  // same slot is retried at most twice, then the failure state is shown
+  // until the next slot (the policy itself lives in lib/sync/playback.ts).
+  const handleFailure = useCallback((): void => {
+    const slot = currentRef.current;
+    if (!slot) return; // nothing playing — the poll loop owns standby
+    const key = slotKey(slot.startsAt, slot.endsAt);
+    const next = registerFailure(failedRef.current, key);
+    failedRef.current = next;
+    if (next.giveUp) {
+      setPlaybackFailed(true); // clear state until the slot changes
+      return;
+    }
+    pollNowRef.current();
+  }, []);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    return watchPlaybackFailures(audio, handleFailure);
+  }, [handleFailure]);
 
   // Drift correction: several times a second, seek when |drift| > 3 s.
   useEffect(() => {
@@ -200,7 +258,9 @@ export function RadioPlayer() {
         <button type="button" onClick={onPlayPause} className="rounded-full border px-4 py-2">
           {playing ? t("pause") : t("play")}
         </button>
-        <span className="text-sm text-neutral-300">{nowTitle ?? t("standby")}</span>
+        <span className="text-sm text-neutral-300">
+          {playbackFailed ? t("playbackFailed") : (nowTitle ?? t("standby"))}
+        </span>
       </div>
       <div className="mt-3 flex gap-2 text-sm" role="tablist">
         <button

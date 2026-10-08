@@ -12,7 +12,8 @@
     "pause": "Пауза",
     "nowPlaying": "Сейчас в эфире",
     "standby": "Пауза — станция сейчас молчит",
-    "modePlaylistStub": "Мой плейлист (скоро)"
+    "modePlaylistStub": "Мой плейлист (скоро)",
+    "playbackFailed": "Трек не воспроизводится — ждём следующий…"
   },
   "language": {
     "label": "Язык"

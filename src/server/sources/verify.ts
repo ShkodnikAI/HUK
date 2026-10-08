@@ -21,6 +21,7 @@ import { db as defaultDb } from "@/server/db";
 import { audit } from "@/server/audit";
 import { HttpError } from "@/server/http/errors";
 import { safeFetch, SafeFetchError, type SafeLoader, type SafeResolver } from "@/server/net/safe-fetch";
+import { retireTrackFromAir } from "@/server/broadcast/retire";
 import { probeDirectUrl } from "./direct-url";
 
 export type VerifySeam = {
@@ -129,6 +130,10 @@ export async function verifyTrackSource(trackId: string, seam: VerifySeam = {}):
           },
         }),
       ]);
+      // H-212 (G2): the track left the air — end the live slot and delete
+      // all future slots in one transaction. The scheduler self-heal is the
+      // second line of defence if this call ever fails.
+      await retireTrackFromAir(trackId, new Date(), client);
       await audit({
         actorKind: "worker",
         action: "source.mismatch",
@@ -162,6 +167,8 @@ export async function verifyTrackSource(trackId: string, seam: VerifySeam = {}):
             },
           }),
         ]);
+        // H-212 (G2): same retirement as the cheap mismatch above.
+        await retireTrackFromAir(trackId, new Date(), client);
         await audit({
           actorKind: "worker",
           action: "source.mismatch",
@@ -201,6 +208,9 @@ export async function verifyTrackSource(trackId: string, seam: VerifySeam = {}):
     });
     if (unavailable) {
       await client.track.update({ where: { id: trackId }, data: { available: false } });
+      // H-212 (G2): an unavailable source must not keep airing — retire the
+      // slots in the same call, not just filter them out of /now.
+      await retireTrackFromAir(trackId, new Date(), client);
       await audit({
         actorKind: "worker",
         action: "source.unavailable",

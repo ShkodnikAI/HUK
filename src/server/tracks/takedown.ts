@@ -1,8 +1,9 @@
 // Takedown (H-206, task 3): removes a track from the platform while keeping
 // the evidence trail. Status TAKEN_DOWN (S2: /now and every public reader
 // filter on APPROVED, so the track disappears from presentation at once),
-// the live slot is ended through endCurrentSlotEarly, ALL future slots of
-// the track are deleted, an AuditLog row records the actor and the reason.
+// the live slot is ended and ALL future slots of the track are deleted in
+// one transaction via retireTrackFromAir (H-212, G2), an AuditLog row
+// records the actor and the reason.
 // Idempotent: a second call on a TAKEN_DOWN track is a no-op.
 //
 // The statement of reasons itself lives on the resolved Report (S9: every
@@ -11,7 +12,7 @@
 import { HttpError } from "@/server/http/errors";
 import { audit } from "@/server/audit";
 import { db as defaultDb } from "@/server/db";
-import { endCurrentSlotEarly } from "@/server/broadcast/scheduler";
+import { retireTrackFromAir } from "@/server/broadcast/retire";
 
 export type TakedownSeam = {
   client?: typeof defaultDb;
@@ -42,10 +43,9 @@ export async function takedownTrack(
 
   const at = now();
   await client.track.update({ where: { id: trackId }, data: { status: "TAKEN_DOWN" } });
-  // The live slot ends now (one scheduler tick fills the hole afterwards);
-  // future slots must not survive the takedown at all.
-  await endCurrentSlotEarly(trackId, at);
-  await client.broadcastSlot.deleteMany({ where: { trackId, startsAt: { gt: at } } });
+  // The live slot ends and all future slots are deleted in ONE transaction
+  // (H-212, G2); one scheduler tick fills the hole afterwards.
+  await retireTrackFromAir(trackId, at, client);
 
   await audit({
     actorId: actorId ?? undefined,
