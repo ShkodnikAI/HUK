@@ -12,6 +12,7 @@ import { loadEnv } from "@/server/env";
 import { db as defaultDb } from "@/server/db";
 import type { MaintenanceJob } from "./types";
 import { verifyTrackSource } from "@/server/sources/verify";
+import { closeStaleSessions } from "@/server/listen/session";
 
 const HOURLY_MS = 60 * 60 * 1000;
 const DAILY_MS = 24 * HOURLY_MS;
@@ -196,6 +197,29 @@ export function makeMaintenanceJobs(
           auditBatchSize,
         );
         return `${removed} audit entries older than ${AUDIT_RETENTION_MONTHS} months removed`;
+      },
+    },
+    {
+      name: "listen-sessions",
+      everyMs: TEN_MINUTES_MS,
+      run: async () => {
+        // H-301 (S7): close sessions whose beat loop vanished (no beat for
+        // 60 s — each writes exactly one ListenEvent), then purge closed
+        // sessions 48 h after closing in bounded batches (G6).
+        const closed = await closeStaleSessions({ client });
+        const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+        const removed = await batchedDelete(
+          () =>
+            client.listenSession.findMany({
+              where: { closedAt: { lt: cutoff } },
+              orderBy: { closedAt: "asc" },
+              take: purgeBatchSize,
+              select: { id: true },
+            }),
+          (rows) => client.listenSession.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } }).then((r) => r.count),
+          purgeBatchSize,
+        );
+        return `${closed} stale sessions closed, ${removed} closed sessions purged`;
       },
     },
     {

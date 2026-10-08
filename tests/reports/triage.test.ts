@@ -46,13 +46,13 @@ describe("H-206 restriction skip (shared contract, used by the player)", () => {
   const base: RadioNowResponse = {
     serverTime: 1000,
     current: {
-      track: { id: "t1", title: "x", artist: null, durationSec: 60, audioUrl: "u", restrictedIn: ["DE", "FR"] },
+      track: { id: "t1", title: "x", artist: null, durationSec: 60, audioUrl: "u", restrictedIn: ["DE", "FR"], likes: 0 },
       startsAt: 0,
       endsAt: 60_000,
       offsetMs: 10,
     },
     next: [
-      { track: { id: "t2", title: "y", artist: null, durationSec: 60, audioUrl: "u", restrictedIn: [] }, startsAt: 60_000, endsAt: 120_000 },
+      { track: { id: "t2", title: "y", artist: null, durationSec: 60, audioUrl: "u", restrictedIn: [], likes: 0 }, startsAt: 60_000, endsAt: 120_000 },
     ],
   };
 

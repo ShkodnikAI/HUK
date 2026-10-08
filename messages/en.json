@@ -13,7 +13,10 @@
     "nowPlaying": "Now playing",
     "standby": "Standby — the station is silent right now",
     "modePlaylistStub": "My playlist (coming soon)",
-    "playbackFailed": "This track failed to play — waiting for the next one…"
+    "playbackFailed": "This track failed to play — waiting for the next one…",
+    "like": "Like",
+    "liked": "Liked",
+    "likeLocked": "Listen for 30 seconds before liking this track"
   },
   "language": {
     "label": "Language"

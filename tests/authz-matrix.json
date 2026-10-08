@@ -153,6 +153,61 @@
         "ADMIN": 400,
         "banned": 403
       }
+    },
+    "/api/listen/start": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 400,
+        "LISTENER": 400,
+        "ARTIST": 400,
+        "MODERATOR": 400,
+        "ADMIN": 400,
+        "banned": 400
+      }
+    },
+    "/api/listen/beat": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 400,
+        "LISTENER": 400,
+        "ARTIST": 400,
+        "MODERATOR": 400,
+        "ADMIN": 400,
+        "banned": 400
+      }
+    },
+    "/api/reactions": {
+      "method": "POST",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 400,
+        "ARTIST": 400,
+        "MODERATOR": 400,
+        "ADMIN": 400,
+        "banned": 403
+      }
+    },
+    "/api/reactions/:trackId": {
+      "method": "DELETE",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 422,
+        "ARTIST": 422,
+        "MODERATOR": 422,
+        "ADMIN": 422,
+        "banned": 403
+      }
+    },
+    "/api/me/reactions": {
+      "method": "GET",
+      "expected": {
+        "anonymous": 401,
+        "LISTENER": 422,
+        "ARTIST": 422,
+        "MODERATOR": 422,
+        "ADMIN": 422,
+        "banned": 403
+      }
     }
   }
 }

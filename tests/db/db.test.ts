@@ -36,6 +36,8 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, utimesSync, existsSync, statSync, rmSync } from "node:fs";
 import { route } from "@/server/http/handler";
 import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
+import { VERIFIED_FOR_REACTION_MS, beat, closeStaleSessions, startListenSession } from "@/server/listen/session";
+import { react, unreact } from "@/server/reactions/service";
 import { startMaintenance, type MaintenanceJob } from "@/server/maintenance/runner";
 import type { PrismaClient, User } from "@prisma/client";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -1089,7 +1091,10 @@ describe.skipIf(!databaseUrl)("auth guard, matrix and magic-link flows (H-102)",
       const entry = matrix.routes[key as keyof typeof matrix.routes];
       if (entry.skipCall) continue; // public-by-design; flows tested separately
 
-      const mod = await import(`@/app${key === "/api" ? "" : key.replace(":nextauth*", "[...nextauth]")}/route`);
+      // H-301: generalise path params (:trackId) to the directory form.
+      const mod = await import(
+        `@/app${key === "/api" ? "" : key.replace(":nextauth*", "[...nextauth]").replace(/:(\w+)/g, "[$1]")}/route`
+      );
       const handler = mod[entry.method];
       expect(handler, `${entry.method} export missing for ${key}`).toBeTruthy();
 
@@ -3504,5 +3509,269 @@ describe.skipIf(!databaseUrl)("maintenance batching (H-213, G6)", () => {
     });
     expect(await purge.run()).toContain("23 verification tokens"); // 4 batches of ≤7
     expect(await db.verificationToken.count()).toBe(0);
+  });
+});
+
+describe.skipIf(!databaseUrl)("listening verification and reactions (H-301)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  /** Deterministic clock the tests drive by hand. */
+  let clock = 1_700_000_000_000; // arbitrary fixed epoch
+  const nowFn = (): Date => new Date(clock);
+
+  async function approvedTrack(durationSec = 300): Promise<string> {
+    const track = await db.track.create({
+      data: { title: "h301 track", status: "APPROVED", available: true, durationSec },
+    });
+    await db.trackSource.create({ data: { trackId: track.id, provider: "SEED", url: "https://seed.test/h301.mp3" } });
+    return track.id;
+  }
+
+  async function plantRadioSlot(trackId: string): Promise<void> {
+    await db.broadcastSlot.create({
+      data: {
+        seq: 5_000_001n,
+        trackId,
+        startsAt: new Date(clock - 10_000),
+        endsAt: new Date(clock + 240_000),
+      },
+    });
+  }
+
+  const identity = (userId: string | null, anonId?: string) => ({ userId, anonHash: anonId ?? null });
+
+  it("RADIO start requires the track to be the current slot (409 otherwise); PLAYLIST requires a public track", async () => {
+    const track = await approvedTrack();
+    await expect(
+      startListenSession({ trackId: track, mode: "RADIO" }, identity("u1"), { client: db, now: nowFn }),
+    ).rejects.toMatchObject({ code: "NOT_ON_AIR", status: 409 });
+
+    await plantRadioSlot(track);
+    const { sessionId } = await startListenSession({ trackId: track, mode: "RADIO" }, identity("u1"), { client: db, now: nowFn });
+    expect(sessionId).toBeTruthy();
+
+    // A public track is verifiable in PLAYLIST mode without a slot…
+    const { sessionId: playlistSession } = await startListenSession(
+      { trackId: track, mode: "PLAYLIST" },
+      identity("u1"),
+      { client: db, now: nowFn },
+    );
+    expect(playlistSession).toBeTruthy();
+
+    // …but a non-public track is not (S2).
+    const draft = await db.track.create({ data: { title: "draft", status: "PENDING", durationSec: 60 } });
+    await expect(
+      startListenSession({ trackId: draft.id, mode: "PLAYLIST" }, identity("u1"), { client: db, now: nowFn }),
+    ).rejects.toMatchObject({ code: "TRACK_NOT_PUBLIC", status: 409 });
+  });
+
+  it("beats every 1 s earn nothing; spaced beats earn min(elapsed, 15 s, remaining); credit never exceeds wall time", async () => {
+    const track = await approvedTrack();
+    await plantRadioSlot(track);
+    const { sessionId } = await startListenSession({ trackId: track, mode: "RADIO" }, identity("u1"), { client: db, now: nowFn });
+
+    // 4 beats at 1 s spacing: every one is sooner than 5 s → 0.
+    for (let i = 1; i <= 4; i++) {
+      clock += 1_000;
+      const res = await beat({ sessionId }, identity("u1"), { client: db, now: nowFn });
+      expect(res.verifiedMs).toBe(0);
+    }
+    // The 5 s beat (exactly at the spacing boundary) credits 5 s of wall time.
+    clock += 1_000;
+    const res5 = await beat({ sessionId }, identity("u1"), { client: db, now: nowFn });
+    expect(res5.verifiedMs).toBe(5_000);
+
+    // A beat 30 s later earns min(30 s, 15 s) = 15 s — capped by the ceiling.
+    clock += 30_000;
+    const res6 = await beat({ sessionId }, identity("u1"), { client: db, now: nowFn });
+    expect(res6.verifiedMs).toBe(20_000);
+  });
+
+  it("a beat sooner than 5 s earns nothing and does not advance the window; a late beat (> 60 s) closes with no credit", async () => {
+    const track = await approvedTrack();
+    await plantRadioSlot(track);
+    const { sessionId } = await startListenSession({ trackId: track, mode: "RADIO" }, identity("u1"), { client: db, now: nowFn });
+
+    clock += 10_000;
+    expect((await beat({ sessionId }, identity("u1"), { client: db, now: nowFn })).verifiedMs).toBe(10_000);
+
+    // Replay hammering: beats at +1 s, +2 s, +3 s earn nothing.
+    for (let i = 1; i <= 3; i++) {
+      clock += 1_000;
+      expect((await beat({ sessionId }, identity("u1"), { client: db, now: nowFn })).verifiedMs).toBe(10_000);
+    }
+
+    // A late beat: 70 s since the last credit → the session lapses, no credit.
+    clock += 70_000;
+    const late = await beat({ sessionId }, identity("u1"), { client: db, now: nowFn });
+    expect(late.closed).toBe(true);
+    expect(late.verifiedMs).toBe(10_000);
+    // Exactly one ListenEvent, the session is closed, and a replayed beat is a 409.
+    expect(await db.listenEvent.count({ where: { trackId: track } })).toBe(1);
+    expect((await db.listenEvent.findFirstOrThrow({ where: { trackId: track } })).msListened).toBe(10_000);
+    await expect(beat({ sessionId }, identity("u1"), { client: db, now: nowFn })).rejects.toMatchObject({ code: "SESSION_CLOSED", status: 409 });
+  });
+
+  it("another user's session id is rejected; RADIO credit is capped at the slot end and stops when the slot rotates away", async () => {
+    const track = await approvedTrack(600);
+    // A slot ending 25 s after the session start.
+    await db.broadcastSlot.create({
+      data: { seq: 5_000_001n, trackId: track, startsAt: new Date(clock - 10_000), endsAt: new Date(clock + 25_000) },
+    });
+    const { sessionId } = await startListenSession({ trackId: track, mode: "RADIO" }, identity("u1"), { client: db, now: nowFn });
+
+    await expect(beat({ sessionId }, identity("u2"), { client: db, now: nowFn })).rejects.toMatchObject({ code: "SESSION_OWNER", status: 403 });
+
+    // 20 s elapsed: the generic ceiling allows 15 s, but only 5 s of slot
+    // remain → credit is capped at the slot end.
+    clock += 20_000;
+    const r1 = await beat({ sessionId }, identity("u1"), { client: db, now: nowFn });
+    expect(r1.verifiedMs).toBe(5_000);
+
+    // After the slot rotates away, RADIO beats earn nothing (fail closed).
+    clock += 10_000;
+    const r2 = await beat({ sessionId }, identity("u1"), { client: db, now: nowFn });
+    expect(r2.verifiedMs).toBe(5_000);
+  });
+
+  it("a skipped final beat closes the session and flags skippedEarly under 30 s; the 80% completion marks the event", async () => {
+    const track = await approvedTrack(300);
+    await plantRadioSlot(track);
+    const { sessionId } = await startListenSession({ trackId: track, mode: "RADIO" }, identity("u1"), { client: db, now: nowFn });
+
+    clock += 10_000;
+    const res = await beat({ sessionId, skipped: true }, identity("u1"), { client: db, now: nowFn });
+    expect(res.closed).toBe(true);
+    const event = await db.listenEvent.findFirstOrThrow({ where: { trackId: track } });
+    expect(event.msListened).toBe(10_000);
+    expect(event.skippedEarly).toBe(true); // 10 s < 30 s
+    expect(event.completed).toBe(false);
+
+    // A long session reaching 80 % of the duration marks completed on close.
+    const { sessionId: sid2 } = await startListenSession({ trackId: track, mode: "PLAYLIST" }, identity("u1"), { client: db, now: nowFn });
+    for (let i = 0; i < 20; i++) {
+      clock += 15_000;
+      await beat({ sessionId: sid2 }, identity("u1"), { client: db, now: nowFn });
+    }
+    await beat({ sessionId: sid2, skipped: true }, identity("u1"), { client: db, now: nowFn });
+    const second = await db.listenEvent.findFirstOrThrow({ where: { trackId: track, mode: "PLAYLIST" } });
+    expect(second.completed).toBe(true); // 300 s ≥ 80 % of 300 s
+    expect(second.skippedEarly).toBe(false); // ≥ 30 s verified
+  });
+
+  it("closeStaleSessions closes idle sessions exactly once", async () => {
+    const track = await approvedTrack();
+    const { sessionId } = await startListenSession(
+      { trackId: track, mode: "PLAYLIST", anonId: "anon-id-0123456789" },
+      identity(null),
+      { client: db, now: nowFn },
+    );
+    clock += 120_000; // idle for 2 minutes
+    expect(await closeStaleSessions({ client: db, now: nowFn })).toBe(1);
+    expect(await db.listenEvent.count()).toBe(1);
+    expect(await closeStaleSessions({ client: db, now: nowFn })).toBe(0); // idempotent
+    void sessionId;
+  });
+
+  it("a reaction before 30 s verified is 403; at 30 s accepted; LIKE→DISLIKE updates the single row; unreact removes", async () => {
+    const track = await approvedTrack();
+    const user = await db.user.create({ data: { email: "h301@test.example" } });
+
+    // 10 s verified → 403.
+    await db.listenSession.create({
+      data: { userId: user.id, trackId: track, mode: "RADIO", verifiedMs: 10_000, startedAt: new Date(clock) },
+    });
+    await expect(react({ trackId: track, type: "LIKE" }, user.id, "iphash-1", { client: db, now: nowFn })).rejects.toMatchObject({ code: "LISTEN_NOT_VERIFIED", status: 403 });
+
+    // Exactly 30 s → accepted; a double click (concurrent) yields ONE row.
+    await db.listenSession.updateMany({ where: { userId: user.id }, data: { verifiedMs: VERIFIED_FOR_REACTION_MS } });
+    const [first, second] = await Promise.all([
+      react({ trackId: track, type: "LIKE" }, user.id, "iphash-1", { client: db, now: nowFn }),
+      react({ trackId: track, type: "LIKE" }, user.id, "iphash-1", { client: db, now: nowFn }),
+    ]);
+    expect(first.type).toBe("LIKE");
+    expect(second.type).toBe("LIKE");
+    expect(await db.reaction.count({ where: { userId: user.id } })).toBe(1);
+
+    // LIKE → DISLIKE updates the same row.
+    await react({ trackId: track, type: "DISLIKE" }, user.id, "iphash-1", { client: db, now: nowFn });
+    const rows = await db.reaction.findMany({ where: { userId: user.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type).toBe("DISLIKE");
+    expect(rows[0].ipHash).toBe("iphash-1");
+
+    await unreact(track, user.id, { client: db });
+    expect(await db.reaction.count({ where: { userId: user.id } })).toBe(0);
+  });
+
+  it("contract: /api/radio/now and /api/tracks/mine carry LIKE counts and never any dislike data", async () => {
+    const track = await approvedTrack();
+    await plantRadioSlot(track);
+    const listener = await db.user.create({ data: { email: "h301-l@test.example" } });
+    await db.session.create({
+      data: { userId: listener.id, sessionToken: "tok-h301", expires: new Date(Date.now() + 86_400_000) },
+    });
+    await db.listenSession.create({
+      data: { userId: listener.id, trackId: track, mode: "RADIO", verifiedMs: VERIFIED_FOR_REACTION_MS, startedAt: new Date(clock) },
+    });
+    await react({ trackId: track, type: "LIKE" }, listener.id, "iphash-1", { client: db, now: nowFn });
+    const other = await db.user.create({ data: { email: "h301-x@test.example" } });
+    await db.reaction.create({ data: { userId: other.id, trackId: track, type: "DISLIKE" } });
+
+    const body = await radioNow(clock, db);
+    const tracks = [body.current?.track, ...body.next.map((s) => s.track)].filter(Boolean).map((t) => t as unknown as Record<string, unknown>);
+    expect(tracks.length).toBeGreaterThan(0);
+    for (const t of tracks) {
+      expect(Object.keys(t)).not.toContain("dislikes");
+      expect(t.likes).toBe(1); // only the LIKE is counted, publicly
+    }
+    const raw = JSON.stringify(body);
+    expect(raw).not.toContain("DISLIKE");
+
+    // The author's own listing also exposes likes only.
+    const mine = await import("@/app/api/tracks/mine/route");
+    const author = await db.user.create({ data: { email: "h301-a@test.example", role: "ARTIST" } });
+    await db.track.update({ where: { id: track }, data: { artist: { create: { userId: author.id, handle: `h301-${Date.now()}`, displayName: "H301" } } } });
+    await db.session.create({ data: { userId: author.id, sessionToken: "tok-h301-a", expires: new Date(Date.now() + 86_400_000) } });
+    const req = new Request("http://localhost:3000/api/tracks/mine", { headers: { cookie: "next-auth.session-token=tok-h301-a" } });
+    const res = await mine.GET(req, { params: Promise.resolve({}) });
+    const mineBody = (await res.json()) as { tracks: Array<Record<string, unknown>> };
+    expect(mineBody.tracks[0].likes).toBe(1);
+    expect(JSON.stringify(mineBody)).not.toContain("DISLIKE");
+  });
+
+  it("the listen-sessions job closes stale sessions and purges closed ones after 48 h in bounded batches", async () => {
+    const jobs = makeMaintenanceJobs(db, { purgeBatchSize: 10 });
+    const job = jobs.find((j) => j.name === "listen-sessions")!;
+    const track = await approvedTrack();
+    await startListenSession(
+      { trackId: track, mode: "PLAYLIST", anonId: "anon-id-0123456789" },
+      identity(null),
+      { client: db, now: nowFn },
+    );
+    clock += 120_000; // idle → stale
+    const summary = await job.run();
+    expect(summary).toContain("1 stale sessions closed");
+    expect(await db.listenEvent.count()).toBe(1);
+    // Second run: nothing stale (the closed one is inside the 48 h window).
+    expect(await job.run()).toContain("0 stale sessions closed");
+
+    // A closed session older than 48 h is purged.
+    const longGone = new Date(clock - 49 * 60 * 60 * 1000);
+    await db.listenSession.create({
+      data: { userId: null, anonHash: "anon-id-9876543210", trackId: track, mode: "PLAYLIST", startedAt: longGone, lastBeatAt: longGone, verifiedMs: 5_000, closedAt: longGone },
+    });
+    const summary2 = await job.run();
+    expect(summary2).toContain("1 closed sessions purged");
+    expect(await db.listenSession.count()).toBe(1); // the recent one survives
   });
 });

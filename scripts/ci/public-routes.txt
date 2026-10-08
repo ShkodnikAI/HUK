@@ -3,7 +3,7 @@
 # Everything else must call requireUser/requireRole/requireSession in the handler body.
 # Read-only public GET routes outside /api/mod and /api/admin need no entry.
 
-# Uncomment when the route exists (stale entries are reported):
-# POST /api/radio/listen   # anonymous listen heartbeat; batched, rate limited by IP hash
 POST /api/reports        # legal/contact form; rate limited, captcha-free, no auth by design (H-206)
 POST /api/auth/:nextauth*  # Auth.js sign-in and callbacks are public by design; sign-in rate limited (H-102)
+POST /api/listen/start   # anonymous listening verification (H-301); identity is a hashed anon id, rate limited per user/IP hash
+POST /api/listen/beat    # anonymous listen heartbeat (H-301); ownership checked against the session, rate limited

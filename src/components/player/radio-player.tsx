@@ -21,6 +21,7 @@ import {
   type FailureState,
 } from "@/lib/sync/playback";
 import { applyRestrictions, type RadioNowResponse } from "@/lib/radio/contract";
+import { sendFinalBeat, startListenSession } from "@/lib/listen/client";
 
 // The persistent radio player (H-105): one <audio> element mounted in the
 // root locale layout so it survives navigation. Polls /api/radio/now
@@ -47,6 +48,13 @@ export function RadioPlayer() {
   const [playing, setPlaying] = useState(false);
   const [nowTitle, setNowTitle] = useState<string | null>(null);
   const stoppedRef = useRef(false);
+  // H-301: server-verified listening + the like button.
+  const [slotTrackId, setSlotTrackId] = useState<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const beatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reactionTrackRef = useRef<string | null>(null);
+  const [reaction, setReaction] = useState<"LIKE" | "DISLIKE" | null>(null);
+  const [likeLocked, setLikeLocked] = useState(false);
   // H-212 (G3): per-slot retry budget and standby backoff state.
   const failedRef = useRef<FailureState | null>(null);
   const emptyPollsRef = useRef(0);
@@ -102,6 +110,14 @@ export function RadioPlayer() {
 
     emptyPollsRef.current = 0; // a slot is playing again
     setNowTitle(`${current.track.title}${current.track.artist ? ` — ${current.track.artist}` : ""}`);
+    if (current.track.id !== reactionTrackRef.current) {
+      // H-301: a new track resets the like state (done in this callback, not
+      // an effect body, to avoid cascading renders).
+      reactionTrackRef.current = current.track.id;
+      setReaction(null);
+      setLikeLocked(false);
+      setSlotTrackId(current.track.id);
+    }
 
     const wanted = new URL(current.track.audioUrl, window.location.origin).toString();
     // A pending retry for THIS slot forces a fresh load attempt even though
@@ -182,6 +198,110 @@ export function RadioPlayer() {
     };
   }, [applyTimeline]);
 
+  // H-301: a persistent random id for anonymous verification (hashed with
+  // the rotating salt server-side; the raw id never leaves the browser).
+  const anonId = useCallback((): string | undefined => {
+    try {
+      const KEY = "huk-anon-id";
+      let v = localStorage.getItem(KEY);
+      if (!v) {
+        v = crypto.randomUUID().replace(/-/g, "");
+        localStorage.setItem(KEY, v);
+      }
+      return v;
+    } catch {
+      return undefined; // no storage: anonymous verification unavailable
+    }
+  }, []);
+
+  // H-301: server-verified listening — one session per track while
+  // playing; beats every 10 s; the final beat rides navigator.sendBeacon
+  // so pause/tab-close/navigation still closes the session.
+  useEffect(() => {
+    const beacon = typeof navigator !== "undefined" && "sendBeacon" in navigator ? navigator.sendBeacon.bind(navigator) : null;
+    const endSession = (): void => {
+      if (beatTimerRef.current) {
+        clearInterval(beatTimerRef.current);
+        beatTimerRef.current = null;
+      }
+      if (sessionIdRef.current) {
+        sendFinalBeat(sessionIdRef.current, beacon);
+        sessionIdRef.current = null;
+      }
+    };
+
+    if (!playing || !slotTrackId) {
+      endSession();
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const sid = await startListenSession({ trackId: slotTrackId, mode: "RADIO", anonId: anonId() });
+      if (!sid || cancelled || sessionIdRef.current) return;
+      sessionIdRef.current = sid;
+      beatTimerRef.current = setInterval(() => {
+        const id = sessionIdRef.current;
+        if (!id) return;
+        void fetch("/api/listen/beat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sessionId: id, anonId: anonId() }),
+        }).catch(() => {}); // verification is best-effort, never breaks playback
+      }, 10_000);
+    })();
+    return () => {
+      cancelled = true;
+      endSession();
+    };
+  }, [playing, slotTrackId, anonId]);
+
+  // H-301: the caller's own reaction state for the current track (fetched
+  // once per track; the reset on a track change happens in applyTimeline).
+  useEffect(() => {
+    if (!slotTrackId || reactionTrackRef.current !== slotTrackId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/me/reactions?trackIds=${encodeURIComponent(slotTrackId)}`, { cache: "no-store" });
+        if (!res.ok) return; // anonymous: no own state to show
+        const body = (await res.json()) as { reactions?: Array<{ trackId: string; type: "LIKE" | "DISLIKE" }> };
+        if (!cancelled && body.reactions && body.reactions.length > 0) setReaction(body.reactions[0].type);
+      } catch {
+        /* offline: the button still works */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [slotTrackId]);
+
+  const onLike = useCallback((): void => {
+    const trackId = slotTrackId;
+    if (!trackId) return;
+    void (async () => {
+      try {
+        if (reaction === "LIKE") {
+          const res = await fetch(`/api/reactions/${encodeURIComponent(trackId)}`, { method: "DELETE" });
+          if (res.ok) setReaction(null);
+          return;
+        }
+        const res = await fetch("/api/reactions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ trackId, type: "LIKE" }),
+        });
+        if (res.ok) {
+          setReaction("LIKE");
+          setLikeLocked(false);
+        } else if (res.status === 403) {
+          setLikeLocked(true); // the 30 s verification gate
+        }
+      } catch {
+        /* offline: keep the current state */
+      }
+    })();
+  }, [slotTrackId, reaction]);
+
   // H-212 (G3): audio error / stall > 10 s re-polls /now immediately; the
   // same slot is retried at most twice, then the failure state is shown
   // until the next slot (the policy itself lives in lib/sync/playback.ts).
@@ -261,6 +381,17 @@ export function RadioPlayer() {
         <span className="text-sm text-neutral-300">
           {playbackFailed ? t("playbackFailed") : (nowTitle ?? t("standby"))}
         </span>
+        {slotTrackId && playing && (
+          <button
+            type="button"
+            onClick={onLike}
+            aria-pressed={reaction === "LIKE"}
+            title={likeLocked ? t("likeLocked") : undefined}
+            className={`ml-auto rounded-full border px-3 py-1 text-sm ${reaction === "LIKE" ? "border-[#D4AF37] text-[#D4AF37]" : "text-neutral-300"}`}
+          >
+            {reaction === "LIKE" ? t("liked") : t("like")}
+          </button>
+        )}
       </div>
       <div className="mt-3 flex gap-2 text-sm" role="tablist">
         <button
