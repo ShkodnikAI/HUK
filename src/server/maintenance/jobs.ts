@@ -1,7 +1,10 @@
 // The concrete maintenance job set (H-210, S7). Every job is:
 // - idempotent: re-running it changes nothing (aggregation+deletion is one
 //   atomic statement; the rest are plain bounded deletes/strips);
-// - bounded per run: each pass touches at most `batchSize` rows;
+// - bounded per run: each pass touches at most `batchSize` rows — the
+//   purge jobs delete in batches of `batchSize` rows per statement, at most
+//   MAX_PURGE_BATCHES statements per run (H-213, G6: a huge backlog cannot
+//   lock the table; the next run drains the rest);
 // - audited: the runner writes one AuditLog row per run with the counts.
 
 import type { PrismaClient } from "@prisma/client";
@@ -16,38 +19,99 @@ const MONTHLY_MS = 30 * DAILY_MS;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 /** ARCHITECTURE §4: AuditLog is kept for 24 months. */
 const AUDIT_RETENTION_MONTHS = 24;
+/** H-213 (G6): at most this many batched DELETE statements per job run. */
+const MAX_PURGE_BATCHES = 20;
+
+/**
+ * H-213 (G6): bounded batched delete. Selects one batch of rows, deletes
+ * exactly those rows, repeats — at most MAX_PURGE_BATCHES times. Generic
+ * over the batch row shape (VerificationToken has a composite key, so the
+ * selector carries whatever columns the delete filter needs). Returns the
+ * total removed so the audit entry keeps the real count.
+ */
+async function batchedDelete<B>(
+  selectBatch: () => Promise<B[]>,
+  remove: (batch: B[]) => Promise<number>,
+  batchSize: number,
+): Promise<number> {
+  let total = 0;
+  for (let batch = 0; batch < MAX_PURGE_BATCHES; batch++) {
+    const rows = await selectBatch();
+    if (rows.length === 0) break;
+    total += await remove(rows);
+    if (rows.length < batchSize) break; // the backlog is drained
+  }
+  return total;
+}
 
 /** Payload keys that carry unbounded ASR/transcript text (S7 retention). */
 const TRANSCRIPT_KEYS = ["transcript", "transcripts", "asrText", "asrSegments"] as const;
 
 export function makeMaintenanceJobs(
   client: PrismaClient = defaultDb,
-  opts?: { listenBatchSize?: number; transcriptBatchSize?: number; auditBatchSize?: number },
+  opts?: { listenBatchSize?: number; transcriptBatchSize?: number; auditBatchSize?: number; purgeBatchSize?: number },
 ): MaintenanceJob[] {
   const listenBatchSize = opts?.listenBatchSize ?? 10_000;
   const transcriptBatchSize = opts?.transcriptBatchSize ?? 500;
   const auditBatchSize = opts?.auditBatchSize ?? 5_000;
+  // H-213 (G6): batch size for the bucket/session/token purge statements.
+  const purgeBatchSize = opts?.purgeBatchSize ?? 1_000;
 
   return [
     {
       name: "purge-rate-limit-buckets",
       everyMs: HOURLY_MS,
       run: async () => {
-        const res = await client.rateLimitBucket.deleteMany({
-          where: { windowStart: { lt: new Date() } },
-        });
-        return `${res.count} expired buckets removed`;
+        const removed = await batchedDelete(
+          () =>
+            client.rateLimitBucket.findMany({
+              where: { windowStart: { lt: new Date() } },
+              orderBy: { windowStart: "asc" },
+              take: purgeBatchSize,
+              // composite key (key, windowStart) — no surrogate id column
+              select: { key: true, windowStart: true },
+            }),
+          (rows) =>
+            client.rateLimitBucket
+              .deleteMany({ where: { OR: rows.map((r) => ({ key: r.key, windowStart: r.windowStart })) } })
+              .then((r) => r.count),
+          purgeBatchSize,
+        );
+        return `${removed} expired buckets removed`;
       },
     },
     {
       name: "purge-expired-sessions",
       everyMs: HOURLY_MS,
       run: async () => {
-        const sessions = await client.session.deleteMany({ where: { expires: { lt: new Date() } } });
-        const tokens = await client.verificationToken.deleteMany({
-          where: { expires: { lt: new Date() } },
-        });
-        return `${sessions.count} sessions, ${tokens.count} verification tokens removed`;
+        const sessions = await batchedDelete(
+          () =>
+            client.session.findMany({
+              where: { expires: { lt: new Date() } },
+              orderBy: { expires: "asc" },
+              take: purgeBatchSize,
+              select: { id: true },
+            }),
+          (rows) => client.session.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } }).then((r) => r.count),
+          purgeBatchSize,
+        );
+        const tokens = await batchedDelete(
+          () =>
+            client.verificationToken.findMany({
+              where: { expires: { lt: new Date() } },
+              take: purgeBatchSize,
+              // composite key (identifier, token) — no surrogate id column
+              select: { identifier: true, token: true },
+            }),
+          (rows) =>
+            client.verificationToken
+              .deleteMany({
+                where: { OR: rows.map((r) => ({ identifier: r.identifier, token: r.token })) },
+              })
+              .then((r) => r.count),
+          purgeBatchSize,
+        );
+        return `${sessions} sessions, ${tokens} verification tokens removed`;
       },
     },
     {
@@ -119,8 +183,19 @@ export function makeMaintenanceJobs(
       everyMs: MONTHLY_MS,
       run: async () => {
         const cutoff = new Date(Date.now() - AUDIT_RETENTION_MONTHS * 30 * 24 * 60 * 60 * 1000);
-        const res = await client.auditLog.deleteMany({ where: { createdAt: { lt: cutoff } } });
-        return `${res.count} audit entries older than ${AUDIT_RETENTION_MONTHS} months removed`;
+        // H-213 (G6): batched — a 24-month-old backlog cannot lock the table.
+        const removed = await batchedDelete(
+          () =>
+            client.auditLog.findMany({
+              where: { createdAt: { lt: cutoff } },
+              orderBy: { createdAt: "asc" },
+              take: auditBatchSize,
+              select: { id: true },
+            }),
+          (rows) => client.auditLog.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } }).then((r) => r.count),
+          auditBatchSize,
+        );
+        return `${removed} audit entries older than ${AUDIT_RETENTION_MONTHS} months removed`;
       },
     },
     {

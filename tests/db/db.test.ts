@@ -16,7 +16,8 @@ import { SESSION_COOKIE, requireRole, requireSession, requireUser } from "@/serv
 import type { SafeLoader } from "@/server/net/safe-fetch";
 import { createDefaultLoader, SafeFetchError } from "@/server/net/safe-fetch";
 import { verifyTrackSource, withModerationFile, sweepStaleTempFiles } from "@/server/sources/verify";
-import { guard, BudgetExceeded } from "@/server/budget";
+import { guard, BudgetExceeded, NotChargedError } from "@/server/budget";
+import { guardedProviderFetch } from "@/server/moderation/adapters/provider-fetch";
 import { loadPolicy } from "@/server/moderation/policy";
 import { technicalCheck, type TechnicalResult } from "@/server/moderation/technical";
 import { claimModerationTrack, moderateTrack, releaseModerationClaim, runModerationPass, defaultAdapters, type OrchestratorSeam } from "@/server/moderation/orchestrator";
@@ -1710,7 +1711,7 @@ describe.skipIf(!databaseUrl)("source verification and moderation downloads (H-2
 
   const seamFor = (port: number, extra?: { env?: Record<string, unknown> }) => ({
     loader: localLoaderFn(port),
-    resolver: async () => ["203.0.113.10"], // TEST-NET-3: passes classification
+    resolver: async () => ["93.184.216.34"], // a global unicast address (allowed by classification)
     portAllowlist: [port, 443],
     env: extra?.env as never,
     client: db,
@@ -1947,7 +1948,7 @@ describe.skipIf(!databaseUrl)("track submission (H-203)", () => {
   };
   const seam = () => ({
     loader: localLoader,
-    resolver: async () => ["203.0.113.10"],
+    resolver: async () => ["93.184.216.34"],
     portAllowlist: [443, server.port],
     client: db as never,
   });
@@ -2205,7 +2206,24 @@ describe.skipIf(!databaseUrl)("budget guard (H-204, S6)", () => {
     expect(rows[0].calls).toBe(1);
   });
 
-  it("releases the reservation when the guarded call throws", async () => {
+  it("releases the reservation only for NotChargedError; any other failure keeps it (H-213, G5)", async () => {
+    // A pre-charge failure (DNS/connect, local validation, 4xx before
+    // processing) is certified by NotChargedError: the reservation is refunded.
+    await expect(
+      guard(
+        { provider: "asr", estimateMicroUsd: 50_000 },
+        async () => {
+          throw new NotChargedError("asr", "DNS_FAILED: resolver failed");
+        },
+        { client: db, env: budgetEnv(1_000_000) },
+      ),
+    ).rejects.toBeInstanceOf(NotChargedError);
+    let rows = await db.budgetLedger.findMany();
+    expect(Number(rows[0].costMicroUsd)).toBe(0); // refunded
+    expect(rows[0].calls).toBe(1);
+
+    // A timeout after send may already have been billed: the reservation is
+    // kept (conservative) and the call is recorded as `uncertain`.
     await expect(
       guard(
         { provider: "llm", estimateMicroUsd: 50_000 },
@@ -2215,9 +2233,11 @@ describe.skipIf(!databaseUrl)("budget guard (H-204, S6)", () => {
         { client: db, env: budgetEnv(1_000_000) },
       ),
     ).rejects.toThrow("provider timeout");
-    const rows = await db.budgetLedger.findMany();
-    expect(Number(rows[0].costMicroUsd)).toBe(0); // released; the calls counter stays for the audit trail
-    expect(rows[0].calls).toBe(1);
+    rows = await db.budgetLedger.findMany();
+    const llm = rows.find((r) => r.provider === "llm")!;
+    expect(Number(llm.costMicroUsd)).toBe(50_000); // kept, not released
+    expect(llm.calls).toBe(1);
+    expect(await db.auditLog.count({ where: { action: "budget.uncertain", targetId: "llm" } })).toBe(1);
   });
 
   it("enforces an optional per-provider cap passed to the guard", async () => {
@@ -2309,7 +2329,7 @@ describe.skipIf(!databaseUrl)("moderation pipeline (H-204)", () => {
       technical,
       policy: POLICY,
       loader: localLoaderFn(port),
-      resolver: async () => ["203.0.113.10"],
+      resolver: async () => ["93.184.216.34"],
       portAllowlist: [port, 443],
     };
   }
@@ -3123,7 +3143,7 @@ describe.skipIf(!databaseUrl)("retire from air + scheduler self-heal (H-212)", (
       const outcome = await verifyTrackSource(track.id, {
         client: db,
         loader: changedLoader,
-        resolver: async () => ["203.0.113.10"],
+        resolver: async () => ["93.184.216.34"],
       });
       expect(outcome.outcome).toBe("mismatch");
 
@@ -3159,7 +3179,7 @@ describe.skipIf(!databaseUrl)("retire from air + scheduler self-heal (H-212)", (
     const outcome = await verifyTrackSource(track.id, {
       client: db,
       loader: refusedLoader,
-      resolver: async () => ["203.0.113.10"],
+      resolver: async () => ["93.184.216.34"],
       env: { SOURCE_FULL_HASH_DAYS: 7, SOURCE_MAX_FAILS: 1, AUDIUS_ENABLED: false },
     });
     expect(outcome.outcome).toBe("unavailable");
@@ -3324,7 +3344,7 @@ describe.skipIf(!databaseUrl)("moderation claim + leadership gate (H-211, G1)", 
         policy: POLICY,
         loader: async (req) =>
           realLoader({ ...req, url: new URL(`http://127.0.0.1:${serverPort}${req.url.pathname}${req.url.search}`), pinnedAddress: "127.0.0.1" }),
-        resolver: async () => ["203.0.113.10"],
+        resolver: async () => ["93.184.216.34"],
         portAllowlist: [serverPort, 443],
       };
 
@@ -3359,5 +3379,130 @@ describe.skipIf(!databaseUrl)("moderation claim + leadership gate (H-211, G1)", 
     expect(runs).toBeGreaterThanOrEqual(1); // the leader runs the job
 
     logSpy.mockRestore();
+  });
+});
+
+describe.skipIf(!databaseUrl)("honest cost accounting (H-213, G5)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  const budgetEnv = (total: number) => ({ BUDGET_DAILY_MICRO_USD_TOTAL: total });
+  const URL_ACOUSTID = "https://api.acoustid.org/v2/lookup";
+  const baseOpts = { provider: "acoustid", estimateMicroUsd: 30_000 };
+
+  it("guardedProviderFetch throws NotChargedError on a DNS failure and the reservation is refunded", async () => {
+    await expect(
+      guardedProviderFetch(URL_ACOUSTID, {
+        ...baseOpts,
+        loader: async () => {
+          throw new SafeFetchError("DNS_FAILED", "resolver failed (test)");
+        },
+      }),
+    ).rejects.toBeInstanceOf(NotChargedError);
+    const rows = await db.budgetLedger.findMany();
+    expect(Number(rows[0].costMicroUsd)).toBe(0); // refunded
+    expect(rows[0].calls).toBe(1);
+  });
+
+  it("a 4xx answered before processing settles to 0 and still reaches the adapter", async () => {
+    const res = await guardedProviderFetch(URL_ACOUSTID, {
+      ...baseOpts,
+      loader: async (req) => ({ status: 404, headers: {}, body: null, bytes: 0, url: req.url.toString() }),
+    });
+    expect(res.status).toBe(404); // the adapter keeps its response contract (429 handling)
+    const rows = await db.budgetLedger.findMany();
+    expect(Number(rows[0].costMicroUsd)).toBe(0); // nothing billable happened
+  });
+
+  it("a successful call settles to the estimate; an ambiguous failure keeps the reservation as uncertain", async () => {
+    await guardedProviderFetch(URL_ACOUSTID, {
+      ...baseOpts,
+      loader: async (req) => ({ status: 200, headers: {}, body: new Uint8Array(2), bytes: 2, url: req.url.toString() }),
+    });
+    let rows = await db.budgetLedger.findMany();
+    expect(Number(rows[0].costMicroUsd)).toBe(30_000);
+
+    // A total timeout after send: the request may have been billed — the
+    // reservation stays and budget.uncertain is audited.
+    await expect(
+      guardedProviderFetch(URL_ACOUSTID, {
+        ...baseOpts,
+        loader: async () => {
+          throw new SafeFetchError("TIMEOUT", "total timeout after send (test)");
+        },
+      }),
+    ).rejects.toThrow("TIMEOUT");
+    rows = await db.budgetLedger.findMany();
+    expect(Number(rows[0].costMicroUsd)).toBe(60_000); // 30k settled + 30k kept
+    expect(await db.auditLog.count({ where: { action: "budget.uncertain", targetId: "acoustid" } })).toBe(1);
+  });
+});
+
+describe.skipIf(!databaseUrl)("maintenance batching (H-213, G6)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  it("a 5x batch backlog is fully removed; a second run is a no-op", async () => {
+    const jobs = makeMaintenanceJobs(db, { purgeBatchSize: 10 });
+    const purge = jobs.find((j) => j.name === "purge-expired-sessions")!;
+    const user = await db.user.create({ data: { email: "h213@test.example" } });
+    await db.session.createMany({
+      data: Array.from({ length: 50 }, (_, i) => ({
+        userId: user.id,
+        sessionToken: `expired-${i}`,
+        expires: new Date(Date.now() - 1000),
+      })),
+    });
+    const summary = await purge.run();
+    expect(summary).toContain("50 sessions"); // 5 batches of 10, all drained
+    expect(await db.session.count()).toBe(0);
+    expect(await purge.run()).toContain("0 sessions"); // second run: no-op
+  });
+
+  it("a run is capped at 20 batches; the next run drains the rest", async () => {
+    const jobs = makeMaintenanceJobs(db, { purgeBatchSize: 10 });
+    const purge = jobs.find((j) => j.name === "purge-rate-limit-buckets")!;
+    await db.rateLimitBucket.createMany({
+      data: Array.from({ length: 250 }, (_, i) => ({
+        key: `k-${i}`,
+        windowStart: new Date(Date.now() - 2000 - i),
+        count: 1,
+      })),
+    });
+    const summary = await purge.run();
+    expect(summary).toContain("200"); // 20 batches × 10 rows, then stop
+    expect(await db.rateLimitBucket.count()).toBe(50);
+    expect(await purge.run()).toContain("50"); // the backlog drains next run
+    expect(await db.rateLimitBucket.count()).toBe(0);
+  });
+
+  it("expired verification tokens purge in batches despite the composite key", async () => {
+    const jobs = makeMaintenanceJobs(db, { purgeBatchSize: 7 });
+    const purge = jobs.find((j) => j.name === "purge-expired-sessions")!;
+    await db.verificationToken.createMany({
+      data: Array.from({ length: 23 }, (_, i) => ({
+        identifier: "a@b.c",
+        token: `old-${i}`,
+        expires: new Date(Date.now() - 1000),
+      })),
+    });
+    expect(await purge.run()).toContain("23 verification tokens"); // 4 batches of ≤7
+    expect(await db.verificationToken.count()).toBe(0);
   });
 });
