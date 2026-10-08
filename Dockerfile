@@ -43,10 +43,11 @@ CMD ["bun", "run", "start"]
 FROM oven/bun:1-slim AS worker
 WORKDIR /app
 ENV NODE_ENV=production
-# H-204: the moderation technical stage needs ffprobe/ffmpeg. Worker image
-# only — the web image stays minimal (attack surface, image size).
+# H-204: the moderation technical stage needs ffprobe/ffmpeg. H-205: the
+# fingerprint stage needs fpcalc (libchromaprint-tools). Worker image only —
+# the web image stays minimal (attack surface, image size).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg \
+ && apt-get install -y --no-install-recommends ffmpeg libchromaprint-tools \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=deps --chown=bun:bun /app/node_modules ./node_modules
 COPY --from=builder --chown=bun:bun /app/prisma ./prisma
