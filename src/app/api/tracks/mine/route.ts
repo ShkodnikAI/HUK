@@ -5,6 +5,7 @@
 import { requireRole } from "@/server/guard";
 import { route } from "@/server/http/handler";
 import { db } from "@/server/db";
+import { likeCounts } from "@/server/reactions/service";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ export const GET = route(async (req) => {
     select: { id: true, title: true, status: true, createdAt: true, licenseScope: true },
     take: 100,
   });
+  // H-301: the author's view carries the public LIKE count (never dislikes).
+  const likes = await likeCounts(tracks.map((t) => t.id));
   // Statement of reasons: produced by takedown/moderation actions (H-206);
   // surfaced here when a resolved report targets one of the author's tracks.
   const reasons = await db.report.findMany({
@@ -24,6 +27,10 @@ export const GET = route(async (req) => {
   });
   const reasonByTrack = new Map(reasons.map((r) => [r.targetId, r.resolution as string]));
   return Response.json({
-    tracks: tracks.map((t) => ({ ...t, statementOfReasons: reasonByTrack.get(t.id) ?? null })),
+    tracks: tracks.map((t) => ({
+      ...t,
+      likes: likes.get(t.id) ?? 0,
+      statementOfReasons: reasonByTrack.get(t.id) ?? null,
+    })),
   });
 });

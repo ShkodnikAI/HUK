@@ -19,6 +19,11 @@ export interface RadioNowTrack {
    * (cache-safe); the player combines it with GET /api/geo client-side.
    */
   restrictedIn: string[];
+  /**
+   * H-301: public LIKE count (identical for every listener, so the shared
+   * /now body stays cache-safe). Dislikes are never exposed anywhere.
+   */
+  likes: number;
 }
 
 export interface RadioNowSlot {

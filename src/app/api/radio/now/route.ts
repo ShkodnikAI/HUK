@@ -22,6 +22,7 @@ type SlotRow = {
   artist: string | null;
   audioUrl: string | null;
   restrictedIn: string[] | null;
+  likes: bigint;
 };
 
 /**
@@ -43,7 +44,9 @@ export async function radioNow(
            ts."url"        AS "audioUrl",
            (SELECT array_agg(rr."countryCode" ORDER BY rr."countryCode")
               FROM "RegionRestriction" rr
-             WHERE rr."trackId" = t."id") AS "restrictedIn"
+             WHERE rr."trackId" = t."id") AS "restrictedIn",
+           (SELECT COUNT(*) FROM "Reaction" r
+             WHERE r."trackId" = t."id" AND r."type" = 'LIKE') AS "likes"
       FROM "BroadcastSlot" s
       JOIN "Track" t        ON t."id" = s."trackId"
       LEFT JOIN "ArtistProfile" a ON a."id" = t."artistId"
@@ -62,6 +65,7 @@ export async function radioNow(
     durationSec: row.durationSec,
     audioUrl: row.audioUrl ?? "",
     restrictedIn: row.restrictedIn ?? [],
+    likes: Number(row.likes), // H-301: public LIKE counts only, never dislikes
   });
 
   const first = rows[0];
