@@ -47,14 +47,18 @@ const scheduler = startScheduler();
 // H-210: retention and housekeeping jobs run in this same single-instance
 // process, sequentially and non-overlapping (S7).
 console.log("[worker] maintenance jobs started (H-210)");
-const maintenance = startMaintenance({ jobs: makeMaintenanceJobs() });
+// H-211 (G1): maintenance runs only while this process holds the broadcast
+// advisory lock; a follower idles and re-checks every tick.
+const maintenance = startMaintenance({ jobs: makeMaintenanceJobs(), isLeader: () => scheduler.isLeader() });
 
 // H-204: the moderation cascade consumes PENDING tracks on a bounded tick.
 // Non-overlapping in-process (a pass never starts while one runs); a pass
 // with no eligible work costs one cheap DB query and is not audited.
 const MODERATION_TICK_MS = 30_000;
 const moderationTimer = setInterval(() => {
-  if (stopping || moderationInFlight) return;
+  // H-211 (G1): only the leadership holder consumes the moderation queue;
+  // a follower idles and re-checks on the next tick.
+  if (stopping || moderationInFlight || !scheduler.isLeader()) return;
   moderationInFlight = runModerationPass({ limit: 5, concurrency: 3 })
     .then((summary) => {
       if (summary.eligible > 0) console.log(`[moderation] pass: ${JSON.stringify(summary)}`);

@@ -347,7 +347,31 @@ export type PassSummary = {
   rejected: number;
   review: number;
   errors: number;
+  /** Claimed by another worker instance while this pass was running (H-211). */
+  skipped: number;
 };
+
+/**
+ * Atomic per-track claim (H-211, G1 — defence in depth under the worker
+ * leadership gate): one conditional UPDATE, so exactly one concurrent
+ * instance wins. A track whose claim is stale (older than 10 minutes —
+ * its worker crashed) becomes claimable again; the claim is released when
+ * the pass finishes with the track.
+ */
+export async function claimModerationTrack(trackId: string, client: typeof defaultDb = defaultDb): Promise<boolean> {
+  const rows = await client.$queryRaw<Array<{ id: string }>>`
+    UPDATE "Track" SET "moderationClaimedAt" = now()
+    WHERE "id" = ${trackId} AND "status" = 'PENDING'
+      AND ("moderationClaimedAt" IS NULL OR "moderationClaimedAt" < now() - interval '10 minutes')
+    RETURNING "id"
+  `;
+  return rows.length === 1;
+}
+
+/** Releases the claim in `finally` (the pass is done with the track). */
+export async function releaseModerationClaim(trackId: string, client: typeof defaultDb = defaultDb): Promise<void> {
+  await client.$executeRaw`UPDATE "Track" SET "moderationClaimedAt" = NULL WHERE "id" = ${trackId}`;
+}
 
 /**
  * Consumes PENDING tracks whose latest run is not the HUMAN marker, with
@@ -381,11 +405,26 @@ export async function runModerationPass(
     eligible.push(candidate.id);
   }
 
-  const summary: PassSummary = { eligible: eligible.length, processed: 0, approved: 0, rejected: 0, review: 0, errors: 0 };
+  const summary: PassSummary = {
+    eligible: eligible.length,
+    processed: 0,
+    approved: 0,
+    rejected: 0,
+    review: 0,
+    skipped: 0,
+    errors: 0,
+  };
   let cursor = 0;
   const worker = async (): Promise<void> => {
     while (cursor < eligible.length) {
       const trackId = eligible[cursor++];
+      // H-211 (G1): the atomic claim makes duplicate paid work impossible
+      // even if two passes race the same track; no row means another
+      // instance owns it right now (or it left PENDING).
+      if (!(await claimModerationTrack(trackId, client))) {
+        summary.skipped++;
+        continue;
+      }
       try {
         const decision = await moderateTrack(trackId, opts.seam ?? {});
         summary.processed++;
@@ -395,6 +434,8 @@ export async function runModerationPass(
       } catch (e) {
         summary.errors++;
         log(`[moderation] track ${trackId} failed: ${errMsg(e)}`);
+      } finally {
+        await releaseModerationClaim(trackId, client);
       }
     }
   };

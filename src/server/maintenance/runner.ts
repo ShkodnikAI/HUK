@@ -1,10 +1,10 @@
 // Worker maintenance job runner (H-210, S7): small, sequential, non-
-// overlapping. The worker process is the single maintenance instance
-// (ADR-0004 single-writer rule; the broadcast scheduler already owns the
-// advisory lock in the same process), and the runner additionally guards
-// against overlapping iterations in-process. Every job is idempotent and
-// bounded per run; every run logs a one-line summary and writes an
-// AuditLog entry with the counts.
+// overlapping. H-211 (G1): the runner also honours an injectable leadership
+// gate — in the worker process it is `scheduler.isLeader()`, so only the
+// advisory-lock owner runs maintenance; a follower idles and re-checks every
+// tick. The runner additionally guards against overlapping iterations
+// in-process. Every job is idempotent and bounded per run; every run logs a
+// one-line summary and writes an AuditLog entry with the counts.
 
 import { audit } from "@/server/audit";
 import type { MaintenanceJob } from "./types";
@@ -19,9 +19,14 @@ export function startMaintenance(opts: {
   jobs: MaintenanceJob[];
   tickMs?: number;
   log?: (line: string) => void;
+  /** H-211 (G1): when provided and returning false, the tick is skipped —
+   * a follower idles and re-checks on the next tick. Omitted in tests that
+   * run a runner without a scheduler. */
+  isLeader?: () => boolean;
 }): MaintenanceRunner {
   const jobs = opts.jobs;
   const log = opts.log ?? ((line: string) => console.log(line));
+  const isLeader = opts.isLeader;
 
   let stopped = false;
   let running = false;
@@ -30,6 +35,8 @@ export function startMaintenance(opts: {
 
   async function tick(): Promise<void> {
     if (running || stopped) return;
+    // H-211 (G1): only the leadership holder runs maintenance jobs.
+    if (isLeader && !isLeader()) return; // follower: idle, re-check next tick
     running = true;
     try {
       for (const job of jobs) {

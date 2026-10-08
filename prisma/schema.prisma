@@ -233,6 +233,9 @@ model Track {
   moderatedBy       String?      // "ai" | userId
   moderatedAt       DateTime?
   available         Boolean      @default(true) // source reachable
+  // H-211 (G1): atomic per-track moderation claim; NULL = unclaimed, a
+  // claim older than 10 minutes is stale and may be re-taken (crashed worker).
+  moderationClaimedAt DateTime?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 

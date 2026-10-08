@@ -19,8 +19,8 @@ import { verifyTrackSource, withModerationFile, sweepStaleTempFiles } from "@/se
 import { guard, BudgetExceeded } from "@/server/budget";
 import { loadPolicy } from "@/server/moderation/policy";
 import { technicalCheck, type TechnicalResult } from "@/server/moderation/technical";
-import { moderateTrack, runModerationPass, defaultAdapters, type OrchestratorSeam } from "@/server/moderation/orchestrator";
-import type { ModerationAdapters } from "@/server/moderation/types";
+import { claimModerationTrack, moderateTrack, releaseModerationClaim, runModerationPass, defaultAdapters, type OrchestratorSeam } from "@/server/moderation/orchestrator";
+import type { FingerprintAdapter, ModerationAdapters, ModerationFileRef } from "@/server/moderation/types";
 import { MockFingerprintAdapter, type MockFingerprintConfig } from "@/server/moderation/adapters/fingerprint";
 import { MockAsrAdapter, type MockAsrConfig } from "@/server/moderation/adapters/asr";
 import { MockLlmAdapter, type MockLlmConfig } from "@/server/moderation/adapters/llm";
@@ -3229,5 +3229,135 @@ describe.skipIf(!databaseUrl)("retire from air + scheduler self-heal (H-212)", (
     const second = await takedownTrack(track.id, "again", null, { client: db });
     expect(second.noop).toBe(true);
     expect(await db.auditLog.count({ where: { action: "track.taken-down", targetId: track.id } })).toBe(1);
+  });
+});
+
+describe.skipIf(!databaseUrl)("moderation claim + leadership gate (H-211, G1)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  const POLICY = loadPolicy({ text: "# Test policy (H-211 fixtures)\nRemove: blatant crime. Everything else is allowed. When unsure, REVIEW." });
+
+  it("20 parallel claims on one PENDING track: exactly one wins; the released claim is re-takeable", async () => {
+    const track = await db.track.create({ data: { title: "race", status: "PENDING", durationSec: 60 } });
+    const results = await Promise.all(Array.from({ length: 20 }, () => claimModerationTrack(track.id, db)));
+    expect(results.filter(Boolean)).toHaveLength(1);
+
+    // The pass releases the claim in finally: the track is claimable again…
+    await releaseModerationClaim(track.id, db);
+    expect(await claimModerationTrack(track.id, db)).toBe(true);
+
+    // …and a non-PENDING track is never claimable (the SQL guards status).
+    await db.track.update({ where: { id: track.id }, data: { status: "APPROVED" } });
+    await releaseModerationClaim(track.id, db);
+    expect(await claimModerationTrack(track.id, db)).toBe(false);
+  });
+
+  it("a crashed worker's stale claim expires after 10 minutes and the track is picked up again", async () => {
+    const track = await db.track.create({ data: { title: "crashed", status: "PENDING", durationSec: 60 } });
+    expect(await claimModerationTrack(track.id, db)).toBe(true);
+    // The worker dies without releasing: a fresh claim fails while the claim
+    // is fresh…
+    expect(await claimModerationTrack(track.id, db)).toBe(false);
+    // …and succeeds once the claim is older than the 10-minute TTL (fake
+    // clock: the row is backdated directly).
+    await db.$executeRaw`UPDATE "Track" SET "moderationClaimedAt" = now() - interval '11 minutes' WHERE "id" = ${track.id}`;
+    expect(await claimModerationTrack(track.id, db)).toBe(true);
+    expect(await claimModerationTrack(track.id, db)).toBe(false);
+  });
+
+  it("two worker instances on one Postgres, counting mock adapter: a PENDING track is moderated exactly once", async () => {
+    const body = Buffer.alloc(1024, 7);
+    const realLoader = createDefaultLoader();
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "content-length": String(body.byteLength) });
+      res.end(req.method === "HEAD" ? undefined : body);
+    });
+    const serverPort = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
+    });
+
+    try {
+      const track = await db.track.create({
+        data: {
+          title: "h211 once only",
+          status: "PENDING",
+          durationSec: 60,
+          language: "en",
+          rightsDeclaredAt: new Date(),
+          humanContribution: "vocals and guitar",
+        },
+      });
+      await db.trackSource.create({
+        data: { trackId: track.id, provider: "DIRECT_URL", url: `https://author-host.test:${serverPort}/file.mp3` },
+      });
+
+      // The counting mock: a slow fingerprint stage keeps the winning pass
+      // mid-flight while the racing pass hits the claim (the G1 scenario).
+      let fingerprintCalls = 0;
+      const slowFingerprint: FingerprintAdapter = {
+        provider: "mock-slow-h211",
+        fingerprint: async (_file: ModerationFileRef) => {
+          fingerprintCalls++;
+          await sleep(150);
+          return { verdict: "PASS", confidence: 0.9, payload: {}, costMicroUsd: 0, strongMatch: false, bestScore: 0.1, recording: null };
+        },
+      };
+      const adapters: ModerationAdapters = {
+        fingerprint: slowFingerprint,
+        asr: new MockAsrAdapter({ verdict: "PASS", transcript: "hello world", language: "en" }),
+        llm: new MockLlmAdapter({ raw: JSON.stringify({ verdict: "APPROVE", confidence: 0.9, categories: ["clean"], summary: "clean" }) }),
+      };
+      const seam: OrchestratorSeam = {
+        client: db,
+        adapters,
+        technical: async (): Promise<TechnicalResult> => ({ ok: true, durationSec: 60 }),
+        policy: POLICY,
+        loader: async (req) =>
+          realLoader({ ...req, url: new URL(`http://127.0.0.1:${serverPort}${req.url.pathname}${req.url.search}`), pinnedAddress: "127.0.0.1" }),
+        resolver: async () => ["203.0.113.10"],
+        portAllowlist: [serverPort, 443],
+      };
+
+      // Two worker instances run a moderation pass at the same time.
+      const [a, b] = await Promise.all([runModerationPass({ seam }), runModerationPass({ seam })]);
+
+      expect(a.processed + b.processed).toBe(1); // exactly one pass processed…
+      expect(a.skipped + b.skipped).toBe(1); // …the other lost the claim
+      expect(fingerprintCalls).toBe(1); // exactly one paid adapter call
+      // One run row per executed stage (declaration, technical, fingerprint,
+      // asr, policy) — no duplicated ModerationRun rows.
+      expect(await db.moderationRun.count({ where: { trackId: track.id } })).toBe(5);
+      expect((await db.track.findUniqueOrThrow({ where: { id: track.id } })).status).toBe("APPROVED");
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  }, 30_000);
+
+  it("the maintenance runner runs jobs only while this process is the leader", async () => {
+    let runs = 0;
+    const job: MaintenanceJob = { name: "gate-job", everyMs: 10, run: async () => { runs++; return `${runs} passes`; } };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const follower = startMaintenance({ jobs: [job], tickMs: 10, isLeader: () => false });
+    await sleep(150);
+    expect(runs).toBe(0); // a follower idles and re-checks every tick
+    await follower.stop();
+
+    const leader = startMaintenance({ jobs: [job], tickMs: 10, isLeader: () => true });
+    await sleep(150);
+    await leader.stop();
+    expect(runs).toBeGreaterThanOrEqual(1); // the leader runs the job
+
+    logSpy.mockRestore();
   });
 });
