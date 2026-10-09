@@ -13,7 +13,12 @@ import { fillSlots, NO_REPEAT_MS, NO_REPEAT_TRACKS, type PoolName, type Rng } fr
 export const BROADCAST_LOCK_KEY = 741_128_003;
 
 /** The scheduler keeps at least this much future timeline filled. */
-export const HORIZON_MS = 30 * 60 * 1000;
+// H-112 (D14): raised from 30 to 120 minutes — the cache window is the slot
+// on air plus the next five, so at least 8 slots must sit ahead of now; the
+// moderation stage caps a track at 12 minutes (TECHNICAL_MAX_SEC), and 8
+// such slots span 96 minutes. 120 minutes guarantees the count even when
+// every scheduled track is at the cap.
+export const HORIZON_MS = 120 * 60 * 1000;
 
 /** Size of the `fresh` pool (newest approved tracks) — assumption in the PR. */
 export const FRESH_POOL_SIZE = 25;

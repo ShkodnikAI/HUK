@@ -313,6 +313,18 @@
         "ADMIN": 400,
         "banned": 403
       }
+    },
+    "/api/audio/:trackId": {
+      "method": "GET",
+      "publicByDesign": "broadcast-cache stream (H-112, D14): the harness calls it without path params, and every refusal (unknown/malformed/out-of-window) is the SAME plain 404 by design — parameterised behaviour is covered by the dedicated audio-cache tests",
+      "expected": {
+        "anonymous": 404,
+        "LISTENER": 404,
+        "ARTIST": 404,
+        "MODERATOR": 404,
+        "ADMIN": 404,
+        "banned": 404
+      }
     }
   }
 }

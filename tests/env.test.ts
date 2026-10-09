@@ -46,6 +46,7 @@ describe("loadEnv (S8)", () => {
         IP_HASH_SALT: "test-only fixture value, not a credential",
         CLIENT_IP_HEADER: "cf-connecting-ip",
         EMAIL_SERVER: "smtp://user:pass@localhost:1025",
+        AUDIO_CACHE_DIR: "/var/lib/huk/audio-cache",
         NEXTAUTH_URL: "http://insecure.example",
       }),
     ).toThrow(/NEXTAUTH_URL/);
@@ -58,6 +59,7 @@ describe("loadEnv (S8)", () => {
       IP_HASH_SALT: "test-only fixture value, not a credential",
       CLIENT_IP_HEADER: "cf-connecting-ip",
       EMAIL_SERVER: "smtp://user:pass@localhost:1025",
+      AUDIO_CACHE_DIR: "/var/lib/huk/audio-cache",
       NEXTAUTH_URL: "https://radio.example",
     });
     expect(env.NEXTAUTH_URL).toBe("https://radio.example");

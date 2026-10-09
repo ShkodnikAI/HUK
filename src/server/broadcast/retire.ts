@@ -21,13 +21,17 @@ export type RetireResult = {
  * in a single transaction. `client` is injectable for tests; callers inside
  * an existing transaction should rely on the scheduler self-heal instead of
  * nesting (Prisma interactive transactions cannot nest).
+ *
+ * H-112 (D14/S3): the broadcast cache copy of the track is purged in the
+ * SAME code path, so a takedown removes the bytes immediately (dynamic
+ * import — audio-cache.ts imports this module; no cycle at init time).
  */
 export async function retireTrackFromAir(
   trackId: string,
   at: Date,
   client: PrismaClient = defaultDb,
 ): Promise<RetireResult> {
-  return client.$transaction(async (tx) => {
+  const result = await client.$transaction(async (tx) => {
     const live = await tx.broadcastSlot.findFirst({
       where: { trackId, startsAt: { lte: at }, endsAt: { gt: at } },
       orderBy: { seq: "asc" },
@@ -43,4 +47,13 @@ export async function retireTrackFromAir(
       futureDeleted: future.count,
     };
   });
+  try {
+    const { purgeTrackFromCache } = await import("./audio-cache");
+    purgeTrackFromCache(trackId);
+  } catch (e) {
+    // The slots are retired; a failed purge must not fail the retirement —
+    // the cache pass and the boot sweep evict the stray copy as backup.
+    console.error(`[retire] cache purge failed for ${trackId}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return result;
 }

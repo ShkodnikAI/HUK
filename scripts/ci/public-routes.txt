@@ -4,6 +4,7 @@
 # Read-only public GET routes outside /api/mod and /api/admin need no entry.
 
 POST /api/reports        # legal/contact form; rate limited, captcha-free, no auth by design (H-206)
+GET  /api/audio/:trackId # broadcast-cache stream (H-112, D14): public read-only file of an APPROVED track inside the window; identical 404 for every refusal; rate limited per IP hash
 POST /api/auth/:nextauth*  # Auth.js sign-in and callbacks are public by design; sign-in rate limited (H-102)
 POST /api/listen/start   # anonymous listening verification (H-301); identity is a hashed anon id, rate limited per user/IP hash
 POST /api/listen/beat    # anonymous listen heartbeat (H-301); ownership checked against the session, rate limited

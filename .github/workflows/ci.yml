@@ -28,6 +28,10 @@ jobs:
         run: node scripts/ci/check-no-edge-runtime.mjs
       - name: Provider adapters fetch only through budget.guard (S6, H-204)
         run: node scripts/ci/check-provider-guard.mjs
+      - name: Audio writes confined to the broadcast cache (S3, D14, H-112)
+        run: |
+          node scripts/ci/audio-store.mjs
+          node scripts/ci/audio-store.mjs --selftest
 
   secrets:
     name: gitleaks (blocking)

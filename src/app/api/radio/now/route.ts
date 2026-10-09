@@ -20,6 +20,7 @@ type SlotRow = {
   title: string;
   durationSec: number;
   artist: string | null;
+  provider: string;
   audioUrl: string | null;
   restrictedIn: string[] | null;
   likes: bigint;
@@ -31,6 +32,10 @@ type SlotRow = {
  * restrictedIn subquery (H-206) is part of the same statement, so the body
  * stays identical for every listener (cache-safe: the player applies the
  * restrictions client-side from GET /api/geo).
+ *
+ * H-112 (D14): DIRECT_URL tracks are served from OUR broadcast cache —
+ * /api/audio/<trackId> — so listeners never load the author's host. AUDIUS
+ * (D3 open) and SEED (our own file) keep their URLs unchanged.
  */
 export async function radioNow(
   nowMs: number,
@@ -41,6 +46,7 @@ export async function radioNow(
     SELECT s."seq", s."trackId", s."startsAt", s."endsAt",
            t."title", t."durationSec",
            a."displayName" AS "artist",
+           ts."provider"   AS "provider",
            ts."url"        AS "audioUrl",
            (SELECT array_agg(rr."countryCode" ORDER BY rr."countryCode")
               FROM "RegionRestriction" rr
@@ -63,7 +69,7 @@ export async function radioNow(
     title: row.title,
     artist: row.artist,
     durationSec: row.durationSec,
-    audioUrl: row.audioUrl ?? "",
+    audioUrl: row.provider === "DIRECT_URL" ? `/api/audio/${row.trackId}` : row.audioUrl ?? "",
     restrictedIn: row.restrictedIn ?? [],
     likes: Number(row.likes), // H-301: public LIKE counts only, never dislikes
   });

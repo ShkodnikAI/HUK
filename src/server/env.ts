@@ -92,14 +92,40 @@ const schema = z.object({
     .default(false),
   // H-205: AudD segments sampled per track (12 s each).
   AUDD_SEGMENTS: z.coerce.number().int().min(1).max(10).default(4),
+  // H-112 (D14): broadcast audio cache. Required in production (S8): the
+  // worker persists the window's audio files there. It must be an absolute
+  // path OUTSIDE every served path — a `public` segment is refused outright.
+  AUDIO_CACHE_DIR: z
+    .string()
+    .min(1)
+    .refine(isSafeCacheDir, "AUDIO_CACHE_DIR must be an absolute path outside any served `public` directory")
+    .optional(),
+  // H-112 (D14): total bytes the broadcast cache may hold (default 400 MB).
+  // When full the cache refuses new fetches loudly; in-window entries are
+  // never evicted.
+  AUDIO_CACHE_MAX_BYTES: z.coerce.number().int().positive().default(400 * 1024 * 1024),
 });
 
 export type Env = z.infer<typeof schema>;
 
+/**
+ * H-112 (D14): the broadcast cache directory must be absolute (it is a
+ * container volume, not a web path) and must never sit inside a served
+ * `public` directory — a cache file under the web root would be a stored
+ * user-audio disclosure (S3).
+ */
+export function isSafeCacheDir(dir: string): boolean {
+  if (!dir.startsWith("/")) return false;
+  const segments = dir.split("/").filter((s) => s.length > 0);
+  if (segments.length === 0) return false;
+  if (segments.some((s) => s === "." || s === "..")) return false;
+  return !segments.some((s) => s.toLowerCase() === "public");
+}
+
 // Settings that must be explicitly provided in production (H-103): the IP
 // hashing salt and the trusted client-IP header name are identity/security
 // parameters — a forgotten default would silently weaken S7.
-const REQUIRED_IN_PRODUCTION = ["IP_HASH_SALT", "CLIENT_IP_HEADER", "EMAIL_SERVER"] as const;
+const REQUIRED_IN_PRODUCTION = ["IP_HASH_SALT", "CLIENT_IP_HEADER", "EMAIL_SERVER", "AUDIO_CACHE_DIR"] as const;
 
 export function loadEnv(
   source: Record<string, string | undefined> = process.env,
