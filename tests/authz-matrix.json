@@ -1,330 +1,341 @@
 {
-  "_comment": "Authorization matrix (H-102). Discovered routes must appear here; the test calls each handler per actor and compares statuses. 'skipCall: true' routes are public by design and exercised by dedicated flow tests instead (Auth.js internals need full sign-in machinery).",
-  "actors": [
-    "anonymous",
-    "LISTENER",
-    "ARTIST",
-    "MODERATOR",
-    "ADMIN",
-    "banned"
-  ],
-  "routes": {
-    "/api/health": {
-      "method": "GET",
-      "expected": {
-        "anonymous": 200,
-        "LISTENER": 200,
-        "ARTIST": 200,
-        "MODERATOR": 200,
-        "ADMIN": 200,
-        "banned": 200
-      }
-    },
-    "/api/radio/now": {
-      "method": "GET",
-      "expected": {
-        "anonymous": 200,
-        "LISTENER": 200,
-        "ARTIST": 200,
-        "MODERATOR": 200,
-        "ADMIN": 200,
-        "banned": 200
-      }
-    },
-    "/api/auth/:nextauth*": {
-      "method": "GET",
-      "skipCall": true,
-      "publicByDesign": "Auth.js sign-in and callbacks (H-102); flows covered by dedicated magic-link tests",
-      "expected": {
-        "anonymous": 200,
-        "LISTENER": 200,
-        "ARTIST": 200,
-        "MODERATOR": 200,
-        "ADMIN": 200,
-        "banned": 200
-      }
-    },
-    "/api/admin/invites": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 403,
-        "ARTIST": 403,
-        "MODERATOR": 403,
-        "ADMIN": 400,
-        "banned": 403
-      }
-    },
-    "/api/invites/redeem": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 400,
-        "ARTIST": 400,
-        "MODERATOR": 400,
-        "ADMIN": 400,
-        "banned": 403
-      }
-    },
-    "/api/artists": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 403,
-        "ARTIST": 403,
-        "MODERATOR": 403,
-        "ADMIN": 403,
-        "banned": 403
-      }
-    },
-    "/api/tracks": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 403,
-        "ARTIST": 400,
-        "MODERATOR": 403,
-        "ADMIN": 403,
-        "banned": 403
-      }
-    },
-    "/api/tracks/mine": {
-      "method": "GET",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 403,
-        "ARTIST": 200,
-        "MODERATOR": 403,
-        "ADMIN": 403,
-        "banned": 403
-      }
-    },
-    "/api/reports": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 400,
-        "LISTENER": 400,
-        "ARTIST": 400,
-        "MODERATOR": 400,
-        "ADMIN": 400,
-        "banned": 400
-      }
-    },
-    "/api/mod/reports": {
-      "method": "GET",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 403,
-        "ARTIST": 403,
-        "MODERATOR": 200,
-        "ADMIN": 200,
-        "banned": 403
-      }
-    },
-    "/api/mod/reports/resolve": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 403,
-        "ARTIST": 403,
-        "MODERATOR": 400,
-        "ADMIN": 400,
-        "banned": 403
-      }
-    },
-    "/api/geo": {
-      "method": "GET",
-      "expected": {
-        "anonymous": 200,
-        "LISTENER": 200,
-        "ARTIST": 200,
-        "MODERATOR": 200,
-        "ADMIN": 200,
-        "banned": 200
-      }
-    },
-    "/api/mod/tracks/resolve": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 403,
-        "ARTIST": 403,
-        "MODERATOR": 400,
-        "ADMIN": 400,
-        "banned": 403
-      }
-    },
-    "/api/listen/start": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 400,
-        "LISTENER": 400,
-        "ARTIST": 400,
-        "MODERATOR": 400,
-        "ADMIN": 400,
-        "banned": 400
-      }
-    },
-    "/api/listen/beat": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 400,
-        "LISTENER": 400,
-        "ARTIST": 400,
-        "MODERATOR": 400,
-        "ADMIN": 400,
-        "banned": 400
-      }
-    },
-    "/api/reactions": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 400,
-        "ARTIST": 400,
-        "MODERATOR": 400,
-        "ADMIN": 400,
-        "banned": 403
-      }
-    },
-    "/api/reactions/:trackId": {
-      "method": "DELETE",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 422,
-        "ARTIST": 422,
-        "MODERATOR": 422,
-        "ADMIN": 422,
-        "banned": 403
-      }
-    },
-    "/api/me/reactions": {
-      "method": "GET",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 422,
-        "ARTIST": 422,
-        "MODERATOR": 422,
-        "ADMIN": 422,
-        "banned": 403
-      }
-    },
-    "/api/playlists": [
-      {
-        "method": "GET",
-        "expected": {
-          "anonymous": 401,
-          "LISTENER": 200,
-          "ARTIST": 200,
-          "MODERATOR": 200,
-          "ADMIN": 200,
-          "banned": 403
-        }
-      },
-      {
-        "method": "POST",
-        "expected": {
-          "anonymous": 401,
-          "LISTENER": 400,
-          "ARTIST": 400,
-          "MODERATOR": 400,
-          "ADMIN": 400,
-          "banned": 403
-        }
-      }
-    ],
-    "/api/playlists/:id": [
-      {
-        "method": "GET",
-        "expected": {
-          "anonymous": 404,
-          "LISTENER": 404,
-          "ARTIST": 404,
-          "MODERATOR": 404,
-          "ADMIN": 404,
-          "banned": 404
-        }
-      },
-      {
-        "method": "PATCH",
-        "expected": {
-          "anonymous": 401,
-          "LISTENER": 400,
-          "ARTIST": 400,
-          "MODERATOR": 400,
-          "ADMIN": 400,
-          "banned": 403
-        }
-      },
-      {
-        "method": "DELETE",
-        "expected": {
-          "anonymous": 401,
-          "LISTENER": 404,
-          "ARTIST": 404,
-          "MODERATOR": 404,
-          "ADMIN": 404,
-          "banned": 403
-        }
-      }
-    ],
-    "/api/playlists/:id/items": [
-      {
-        "method": "POST",
-        "expected": {
-          "anonymous": 401,
-          "LISTENER": 400,
-          "ARTIST": 400,
-          "MODERATOR": 400,
-          "ADMIN": 400,
-          "banned": 403
-        }
-      },
-      {
-        "method": "PATCH",
-        "expected": {
-          "anonymous": 401,
-          "LISTENER": 400,
-          "ARTIST": 400,
-          "MODERATOR": 400,
-          "ADMIN": 400,
-          "banned": 403
-        }
-      }
-    ],
-    "/api/playlists/:id/items/:trackId": {
-      "method": "DELETE",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 404,
-        "ARTIST": 404,
-        "MODERATOR": 404,
-        "ADMIN": 404,
-        "banned": 403
-      }
-    },
-    "/api/playlists/import": {
-      "method": "POST",
-      "expected": {
-        "anonymous": 401,
-        "LISTENER": 400,
-        "ARTIST": 400,
-        "MODERATOR": 400,
-        "ADMIN": 400,
-        "banned": 403
-      }
-    },
-    "/api/audio/:trackId": {
-      "method": "GET",
-      "publicByDesign": "broadcast-cache stream (H-112, D14): the harness calls it without path params, and every refusal (unknown/malformed/out-of-window) is the SAME plain 404 by design — parameterised behaviour is covered by the dedicated audio-cache tests",
-      "expected": {
-        "anonymous": 404,
-        "LISTENER": 404,
-        "ARTIST": 404,
-        "MODERATOR": 404,
-        "ADMIN": 404,
-        "banned": 404
-      }
+ "_comment": "Authorization matrix (H-102). Discovered routes must appear here; the test calls each handler per actor and compares statuses. 'skipCall: true' routes are public by design and exercised by dedicated flow tests instead (Auth.js internals need full sign-in machinery).",
+ "actors": [
+  "anonymous",
+  "LISTENER",
+  "ARTIST",
+  "MODERATOR",
+  "ADMIN",
+  "banned"
+ ],
+ "routes": {
+  "/api/health": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 200,
+    "LISTENER": 200,
+    "ARTIST": 200,
+    "MODERATOR": 200,
+    "ADMIN": 200,
+    "banned": 200
+   }
+  },
+  "/api/radio/now": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 200,
+    "LISTENER": 200,
+    "ARTIST": 200,
+    "MODERATOR": 200,
+    "ADMIN": 200,
+    "banned": 200
+   }
+  },
+  "/api/auth/:nextauth*": {
+   "method": "GET",
+   "skipCall": true,
+   "publicByDesign": "Auth.js sign-in and callbacks (H-102); flows covered by dedicated magic-link tests",
+   "expected": {
+    "anonymous": 200,
+    "LISTENER": 200,
+    "ARTIST": 200,
+    "MODERATOR": 200,
+    "ADMIN": 200,
+    "banned": 200
+   }
+  },
+  "/api/admin/invites": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 403,
+    "ARTIST": 403,
+    "MODERATOR": 403,
+    "ADMIN": 400,
+    "banned": 403
+   }
+  },
+  "/api/invites/redeem": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 400,
+    "ARTIST": 400,
+    "MODERATOR": 400,
+    "ADMIN": 400,
+    "banned": 403
+   }
+  },
+  "/api/artists": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 403,
+    "ARTIST": 403,
+    "MODERATOR": 403,
+    "ADMIN": 403,
+    "banned": 403
+   }
+  },
+  "/api/tracks": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 403,
+    "ARTIST": 400,
+    "MODERATOR": 403,
+    "ADMIN": 403,
+    "banned": 403
+   }
+  },
+  "/api/tracks/mine": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 403,
+    "ARTIST": 200,
+    "MODERATOR": 403,
+    "ADMIN": 403,
+    "banned": 403
+   }
+  },
+  "/api/reports": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 400,
+    "LISTENER": 400,
+    "ARTIST": 400,
+    "MODERATOR": 400,
+    "ADMIN": 400,
+    "banned": 400
+   }
+  },
+  "/api/taxonomy": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 200,
+    "LISTENER": 200,
+    "ARTIST": 200,
+    "MODERATOR": 200,
+    "ADMIN": 200,
+    "banned": 200
+   }
+  },
+  "/api/mod/reports": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 403,
+    "ARTIST": 403,
+    "MODERATOR": 200,
+    "ADMIN": 200,
+    "banned": 403
+   }
+  },
+  "/api/mod/reports/resolve": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 403,
+    "ARTIST": 403,
+    "MODERATOR": 400,
+    "ADMIN": 400,
+    "banned": 403
+   }
+  },
+  "/api/geo": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 200,
+    "LISTENER": 200,
+    "ARTIST": 200,
+    "MODERATOR": 200,
+    "ADMIN": 200,
+    "banned": 200
+   }
+  },
+  "/api/mod/tracks/resolve": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 403,
+    "ARTIST": 403,
+    "MODERATOR": 400,
+    "ADMIN": 400,
+    "banned": 403
+   }
+  },
+  "/api/listen/start": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 400,
+    "LISTENER": 400,
+    "ARTIST": 400,
+    "MODERATOR": 400,
+    "ADMIN": 400,
+    "banned": 400
+   }
+  },
+  "/api/listen/beat": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 400,
+    "LISTENER": 400,
+    "ARTIST": 400,
+    "MODERATOR": 400,
+    "ADMIN": 400,
+    "banned": 400
+   }
+  },
+  "/api/reactions": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 400,
+    "ARTIST": 400,
+    "MODERATOR": 400,
+    "ADMIN": 400,
+    "banned": 403
+   }
+  },
+  "/api/reactions/:trackId": {
+   "method": "DELETE",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 422,
+    "ARTIST": 422,
+    "MODERATOR": 422,
+    "ADMIN": 422,
+    "banned": 403
+   }
+  },
+  "/api/me/reactions": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 422,
+    "ARTIST": 422,
+    "MODERATOR": 422,
+    "ADMIN": 422,
+    "banned": 403
+   }
+  },
+  "/api/playlists": [
+   {
+    "method": "GET",
+    "expected": {
+     "anonymous": 401,
+     "LISTENER": 200,
+     "ARTIST": 200,
+     "MODERATOR": 200,
+     "ADMIN": 200,
+     "banned": 403
     }
+   },
+   {
+    "method": "POST",
+    "expected": {
+     "anonymous": 401,
+     "LISTENER": 400,
+     "ARTIST": 400,
+     "MODERATOR": 400,
+     "ADMIN": 400,
+     "banned": 403
+    }
+   }
+  ],
+  "/api/playlists/:id": [
+   {
+    "method": "GET",
+    "expected": {
+     "anonymous": 404,
+     "LISTENER": 404,
+     "ARTIST": 404,
+     "MODERATOR": 404,
+     "ADMIN": 404,
+     "banned": 404
+    }
+   },
+   {
+    "method": "PATCH",
+    "expected": {
+     "anonymous": 401,
+     "LISTENER": 400,
+     "ARTIST": 400,
+     "MODERATOR": 400,
+     "ADMIN": 400,
+     "banned": 403
+    }
+   },
+   {
+    "method": "DELETE",
+    "expected": {
+     "anonymous": 401,
+     "LISTENER": 404,
+     "ARTIST": 404,
+     "MODERATOR": 404,
+     "ADMIN": 404,
+     "banned": 403
+    }
+   }
+  ],
+  "/api/playlists/:id/items": [
+   {
+    "method": "POST",
+    "expected": {
+     "anonymous": 401,
+     "LISTENER": 400,
+     "ARTIST": 400,
+     "MODERATOR": 400,
+     "ADMIN": 400,
+     "banned": 403
+    }
+   },
+   {
+    "method": "PATCH",
+    "expected": {
+     "anonymous": 401,
+     "LISTENER": 400,
+     "ARTIST": 400,
+     "MODERATOR": 400,
+     "ADMIN": 400,
+     "banned": 403
+    }
+   }
+  ],
+  "/api/playlists/:id/items/:trackId": {
+   "method": "DELETE",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 404,
+    "ARTIST": 404,
+    "MODERATOR": 404,
+    "ADMIN": 404,
+    "banned": 403
+   }
+  },
+  "/api/playlists/import": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 400,
+    "ARTIST": 400,
+    "MODERATOR": 400,
+    "ADMIN": 400,
+    "banned": 403
+   }
+  },
+  "/api/audio/:trackId": {
+   "method": "GET",
+   "publicByDesign": "broadcast-cache stream (H-112, D14): the harness calls it without path params, and every refusal (unknown/malformed/out-of-window) is the SAME plain 404 by design — parameterised behaviour is covered by the dedicated audio-cache tests",
+   "expected": {
+    "anonymous": 404,
+    "LISTENER": 404,
+    "ARTIST": 404,
+    "MODERATOR": 404,
+    "ADMIN": 404,
+    "banned": 404
+   }
   }
+ }
 }
