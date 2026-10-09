@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="position:relative;width:390px;height:844px;overflow:hidden;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif;display:flex;flex-direction:column;padding:0 24px">
+  <div style="margin-top:110px;display:flex;flex-direction:column;align-items:center;gap:6px">
+    <span style="font-family:'Cormorant Garamond',serif;font-weight:600;font-size:76px;line-height:1;letter-spacing:0.02em"><span style="color:#D4AF37">H</span><span style="color:#8B8C8E">UK</span></span>
+    <span style="font-size:11px;letter-spacing:0.34em;color:#D4AF37;font-weight:500">FREE INTERNET RADIO</span>
+    <span style="margin-top:4px;font-size:10px;letter-spacing:0.3em;color:#8B8C8E">FEEL EVERY FREQUENCY.</span>
+  </div>
+
+  <h1 style="margin:64px 0 6px 0;font-size:22px;font-weight:600;text-align:center">Sign in</h1>
+  <p style="margin:0 0 22px 0;font-size:14px;line-height:1.5;text-align:center;color:#A3A4A9">We email you a one-time link. No password to remember.</p>
+
+  <label for="email" style="font-size:13px;color:#A3A4A9;margin-bottom:6px">Email</label>
+  <input id="email" type="email" placeholder="you@example.com" style="min-height:52px;box-sizing:border-box;padding:0 14px;border-radius:12px;border:1px solid #D4AF37;background:#1F2025;color:#ECEBE6;font:400 16px 'Inter',sans-serif">
+  <a href="CheckEmail.dc.html" style="margin-top:14px;min-height:52px;border-radius:12px;background:#D4AF37;color:#1A1B1F;font:600 15px 'Inter',sans-serif;display:flex;align-items:center;justify-content:center;text-decoration:none">Send me a link</a>
+
+  <p style="margin:18px 0 0 0;font-size:13px;line-height:1.5;text-align:center;color:#A3A4A9">HUK is in a closed beta. New accounts need an invite code. <a href="Invite.dc.html" style="color:#D4AF37">I have a code</a></p>
+  <p style="margin:auto 0 28px 0;font-size:12px;line-height:1.5;text-align:center;color:#8B8C8E">By continuing you accept the <a href="HowCharts.dc.html" style="color:#8B8C8E">terms</a> and <a href="HowCharts.dc.html" style="color:#8B8C8E">privacy policy</a>. [Links go to the legal pages when they exist.]</p>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

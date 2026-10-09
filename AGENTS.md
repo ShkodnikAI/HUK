@@ -72,8 +72,17 @@ Compare with `main` again before opening the PR, not only before starting.
 - **S2 — No moderation bypass.** Content that is not `APPROVED` is never served
   to the public by any parameter, header or route. Moderators see it only
   through role-checked endpoints.
-- **S3 — No stored user audio.** No code path persists user-supplied audio. A
-  moderation fetch is transient (temp file, deleted in `finally`).
+- **S3 — No stored user audio, except the broadcast window.** No code path
+  persists user-supplied audio, with two exceptions. (a) A moderation fetch is
+  transient (temp file, deleted in `finally`). (b) The **broadcast cache**
+  (Owner decision D14, `src/server/broadcast/audio-cache.ts` only): a copy of
+  the audio for the slot on air and the next five slots, written only for an
+  `APPROVED`, available `DIRECT_URL` track whose bytes match the moderated
+  `contentHash`, kept in a private directory outside every public path, deleted
+  when the slot has ended, the track leaves the window, becomes unavailable,
+  is taken down or is retired, and swept when the worker starts. No route
+  serves a cached file that is not in the window. Anything else that writes
+  user audio to disk is a Critical defect. *(CI: `audio-store`.)*
 - **S4 — Two doors for outbound HTTP.** User-supplied URLs go
   only through `src/server/net/safe-fetch.ts` (blocks private/loopback/link-local
   ranges after DNS resolution, size and time caps, redirect re-validation); fixed provider hosts (Audius, ASR, LLM) go through `src/server/net/trusted-fetch.ts` (host allowlist, timeouts).

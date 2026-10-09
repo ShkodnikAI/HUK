@@ -35,18 +35,27 @@ published only after the record is on `main`. Where a published issue differs fr
 | H-205 | #49 | W2 | merged (PR #65; disabled until D5) |
 | H-206 | #50 | W2 | merged (PR #64) |
 | H-207 | #51 | W2 | merged (PR #66) |
-| H-208 | #52 | W2 | open, waits for Owner decisions (providers, spend cap, D2) |
+| H-208 | #52 | W2 | PARKED 2026-10-09 (Owner); rewritten 2026-10-08, D13 |
 | H-210 | #53 | W2 | merged (PR #59) |
-| H-211 | #68 | W3 follow-up | open |
-| H-212 | #69 | W3 follow-up | open |
-| H-213 | #70 | W3 follow-up | open |
+| H-211 | #68 | W3 follow-up | merged (PR #80) |
+| H-212 | #69 | W3 follow-up | merged (PR #79) |
+| H-213 | #70 | W3 follow-up | merged (PR #81) |
 | H-402 | #71 | W3 (pulled forward from W4) | open, waits for Owner confirmation of the vocabulary |
-| H-301 | #72 | W3 | open |
-| H-302 | #73 | W3 | open |
+| H-301 | #72 | W3 | merged (PR #82) |
+| H-302 | #73 | W3 | merged (PR #83) |
 | H-303 | #74 | W3 | open, publication policy default (a) |
-| H-304 | #75 | W3 | open |
+| H-304 | #75 | W3 | merged (PR #84) |
 | H-305 | #76 | W3 | open |
 | H-214 | #77 | W3 | open |
+| H-215 | #85 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
+| H-216 | #86 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
+| H-217 | #87 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
+| H-504 | #89 | pulled forward from W5 (Owner, 2026-10-09) | open |
+| H-112 | #90 | critical path (Owner, 2026-10-09, D14) | open |
+| H-120 | #91 | critical path: UI (Owner, 2026-10-09) | open |
+| H-121 | #92 | critical path: UI | open, after H-120 |
+| H-122 | #93 | critical path: UI | open, after H-120 |
+| H-123 | #94 | critical path: UI, lyrics | open, after H-120 |
 
 ---
 
@@ -144,7 +153,7 @@ Done: only MODERATOR/ADMIN reach it; every action writes `AuditLog`.
 
 **H-111 — Compose usable again + Docker smoke job in CI.** `[core]` Issue #43. Finding F5.
 
-**H-208 — ASR and LLM adapters.** `[core]` `OD` Issue #52. Providers, spend cap and policy approval (D2) are Owner decisions.
+**H-208 — Moderation decision mode and provider-agnostic adapters.** `[core]` `OD` Issue #52. Rewritten 2026-10-08 under D13: the AI only escalates, LLM off by default, no provider chosen. The cloud transport (POST + auth header on the trusted door, a security change to S4) is NOT part of it and is published only when the Owner picks a provider.
 
 **H-209 — Invites and artist onboarding.** `[feature]` Issue #45.
 
@@ -188,6 +197,34 @@ Done: snapshot idempotent; categories under 20 tracks collapse to parent; cachea
 
 **H-214 — Account export and deletion (S7).** `[security]` Issue #77.
 
+**Added 2026-10-08 (moderation line, decisions D12/D13):**
+
+**H-215 — Local speech recognition.** `[core]` Issue #85. A recogniser run as a child process of the worker on our own server (no third party, no network door); starts with a measured spike.
+
+**H-216 — Risk-sorted moderator queue, text flags, shadow-mode agreement report.** `[feature]` Issue #86. Measures AI vs human so that auto-decisions can be switched on later on evidence.
+
+**H-217 — Free-licence tracks.** `[feature]` `OD` Issue #87. The only way to submit a recording by someone else (D12: no "pirate" mode); always human-reviewed.
+
+**Parked by the Owner (2026-10-09):** H-208, H-215, H-216, H-217 wait until the radio plays on a real server. Critical path: hosting and first deployment (H-504 pulled forward), real-device playback check, UI screens, the rest of W3, closed beta.
+
+**Not published (parked):** the cloud LLM transport (extend the trusted door with POST, request body and an auth header, add the provider host) — a security-class change to S4; written and published only after the Owner chooses a provider.
+
+**UI series (Owner direction 2026-10-09; design reference `docs/design/screens-v1/`, approved the same day).** Published ahead of the W3 gate because the Owner put UI screens on the critical path; the gate audit still happens.
+
+**H-120 - UI foundation.** `[feature]` Issue #91. Dark tokens, fonts without third-party requests, app shell (bottom navigation on phone, top bar on desktop, items hidden until their page exists), base components, 404/offline/quiet states, UI test harness with axe, `docs/UI.md`.
+Done: contrast table, no third-party requests, player survives navigation, catalog parity test.
+
+**H-121 - Listener screens.** `[feature]` Issue #92. Split the player into an engine provider and views (no behaviour change), radio screen (phone and desktop), private dislike button, `/now` gets language, instrumental and AI flags (still a pure cached read), playlists screen.
+Done: pre-existing player tests pass unedited; `/now` at most 2 queries.
+
+**H-122 - Access screens.** `[feature]` Issue #93. Custom Auth.js pages (sign in, check your email, error), invite screen for artists only (listeners need no code), minimal Me tab.
+Done: same response for known and unknown addresses, CSRF intact, identical invite failure messages.
+
+**H-123 - Artist area.** `[feature]` Issue #94. Submit form with optional lyrics (`Track.lyrics`, mechanical checks only, owner-only PATCH), my tracks list with statuses and "Edit lyrics", lyrics shown to moderators.
+Done: link detector corpus, authorization matrix updated, lyrics never public for non-approved tracks.
+
+**Planned, not yet published (waiting on dependencies):** H-124 track page with comments, lyrics display and the radio comment ticker (after H-303, #74); H-125 artist profile, links, stats and the "You are leaving HUK" page (this is H-401; waits for owner decision D2, the approved-link list); H-126 admin invites page plus a list route and the moderator-console restyle; charts UI is part of H-305 (#76), account screen part of H-214 (#77), search is H-403 (waits for H-402, #71). Not scheduled: Telegram bot for artists (post-beta idea, link-only variant, Owner 2026-10-09).
+
 **H-402 — Taxonomy** moved from W4 to W3 because charts (H-305) need categories. Issue #71.
 
 ## W4 — Artists and taxonomy (P1)
@@ -224,9 +261,10 @@ Done: forced budget exhaustion in staging stops moderation and alerts.
 Scope: nightly `pg_dump` off-box, documented restore, timed drill.
 Done: restore on a clean host within the target time; runbook in `docs/RUNBOOK.md`.
 
-**H-504 — Deployment.** `[process]` `OD` (hosting + payment channel, D4)
-Scope: VPS Docker Compose, Cloudflare setup, secrets handling, deploy and rollback runbook.
-Done: deploy from tag; rollback tested.
+**H-504 — Deployment.** `[process]` `OD` Issue #89. Pulled forward 2026-10-09: first deployment on the Owner's own 24/7 Linux server (Docker Compose + Cloudflare Tunnel), prod compose file, env check, update with automatic rollback, nightly backup and restore drill, runbook. A rented VPS (D4) is deferred and reuses the same files. Owner acceptance happens on the real host.
+
+**H-112 - Broadcast audio cache.** `[feature]` security-class, Issue #90. Owner decision D14 (2026-10-09, amends S3): the worker fetches each `DIRECT_URL` track once, checks it against the moderated hash, keeps the slot on air plus the next five in a private directory, and listeners stream it from `/api/audio/:trackId`, so authors' hosts are not loaded by listeners. Purge on takedown, no fallback to the author's URL, CI check `audio-store`. AUDIUS and SEED not cached.
+Done: one request to the author host per airing regardless of listeners; eviction cases tested; Range 206/416 correct; Owner check on the host.
 
 **H-505 — Closed beta.** `[process]`
 Scope: invite-only, caps low, metrics, triage loop.

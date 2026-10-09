@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Invite code</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="position:relative;width:390px;height:844px;overflow:hidden;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif;display:flex;flex-direction:column;padding:0 24px">
+  <div style="display:flex;align-items:center;gap:6px;padding:12px 0 0 0;margin-left:-16px">
+    <a href="SignIn.dc.html" aria-label="Back" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#ECEBE6"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></a>
+  </div>
+  <h1 style="margin:60px 0 8px 0;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:36px;line-height:1.1">Join the beta</h1>
+  <p style="margin:0 0 24px 0;font-size:14px;line-height:1.55;color:#A3A4A9">HUK is invite-only for now. Enter the code you received to create an account or unlock artist features.</p>
+
+  <label for="code" style="font-size:13px;color:#A3A4A9;margin-bottom:6px">Invite code</label>
+  <input id="code" type="text" value="HUK-XXXX-XXXX" style="min-height:56px;box-sizing:border-box;padding:0 16px;border-radius:12px;border:1px solid #D4AF37;background:#1F2025;color:#ECEBE6;font:600 18px 'Inter',sans-serif;letter-spacing:0.12em">
+  <p style="margin:8px 0 0 0;font-size:12px;color:#E58B84">Example error: This code is not valid or has already been used.</p>
+  <a href="CheckEmail.dc.html" style="margin-top:18px;min-height:52px;border-radius:12px;background:#D4AF37;color:#1A1B1F;font:600 15px 'Inter',sans-serif;display:flex;align-items:center;justify-content:center;text-decoration:none">Redeem code</a>
+
+  <div style="margin-top:28px;padding:14px 16px;border-radius:12px;background:#23242A;border:1px solid #34353C">
+    <h2 style="margin:0 0 6px 0;font-size:13px;font-weight:600;letter-spacing:0.08em;color:#D4AF37">WHAT ARTISTS SHOULD KNOW</h2>
+    <p style="margin:0;font-size:13px;line-height:1.55;color:#A3A4A9">You keep your files. HUK stores only links and fingerprints, never your audio. Every track is checked before it can go on air.</p>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

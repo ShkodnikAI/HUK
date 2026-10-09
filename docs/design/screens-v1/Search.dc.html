@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Search</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="position:relative;width:390px;height:844px;overflow:hidden;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif">
+  <header style="padding:22px 20px 0 20px">
+    <h1 style="margin:0;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:36px;line-height:1.1">Search</h1>
+  </header>
+  <div style="padding:14px 20px 0 20px">
+    <label for="q" style="display:block;margin-bottom:6px;font-size:13px;color:#A3A4A9">Track, artist or style</label>
+    <div style="display:flex;align-items:center;gap:8px;min-height:48px;padding:0 14px;border-radius:12px;border:1px solid #D4AF37;background:#1F2025">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A3A4A9" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4-4"/></svg>
+      <input id="q" type="search" value="ambient" style="flex:1;min-width:0;height:44px;border:0;outline:0;background:none;color:#ECEBE6;font:400 15px 'Inter',sans-serif">
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;padding:12px 20px 0 20px">
+    <button type="button" style="min-height:44px;padding:0 16px;border-radius:22px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 13px 'Inter',sans-serif">Language: any</button>
+    <button type="button" style="min-height:44px;padding:0 16px;border-radius:22px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 13px 'Inter',sans-serif">Style: any</button>
+    <button type="button" style="min-height:44px;padding:0 16px;border-radius:22px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 13px 'Inter',sans-serif">Vocal</button>
+  </div>
+  <p style="margin:14px 20px 0 20px;font-size:13px;color:#A3A4A9">3 results</p>
+  <ul style="list-style:none;margin:6px 0 0 0;padding:0 20px">
+    <li style="display:flex;align-items:center;gap:12px;min-height:68px;border-bottom:1px solid #2C2D34"><div style="flex:1;min-width:0"><a href="Track.dc.html" style="display:block;font-size:15px;font-weight:600;color:#ECEBE6;text-decoration:none">Track title</a><span style="font-size:13px;color:#A3A4A9">Artist name · English · Ambient</span></div><span style="font-size:12px;color:#A3A4A9">3:41</span></li>
+    <li style="display:flex;align-items:center;gap:12px;min-height:68px;border-bottom:1px solid #2C2D34"><div style="flex:1;min-width:0"><a href="Track.dc.html" style="display:block;font-size:15px;font-weight:600;color:#ECEBE6;text-decoration:none">Track title</a><span style="font-size:13px;color:#A3A4A9">Artist name · Instrumental · Ambient</span></div><span style="font-size:12px;color:#A3A4A9">5:02</span></li>
+    <li style="display:flex;align-items:center;gap:12px;min-height:68px"><div style="flex:1;min-width:0"><a href="Track.dc.html" style="display:block;font-size:15px;font-weight:600;color:#ECEBE6;text-decoration:none">Track title</a><span style="font-size:13px;color:#A3A4A9">Artist name · Russian · Ambient</span></div><span style="font-size:12px;color:#A3A4A9">2:58</span></li>
+  </ul>
+  <p style="margin:18px 20px 0 20px;font-size:12px;line-height:1.5;color:#A3A4A9">Only approved tracks appear here. With no results you will see: "Nothing found. Try fewer words or another language."</p>
+
+  <nav aria-label="Main" style="position:absolute;left:0;right:0;bottom:0;height:68px;background:#1F2025;border-top:1px solid #34353C;display:flex">
+    <a href="Main.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M7.500 7.500a6 6 0 0 0 0 9M16.500 7.500a6 6 0 0 1 0 9M4.500 4.500a10 10 0 0 0 0 15M19.500 4.500a10 10 0 0 1 0 15"/></svg>Radio</a>
+    <a href="Charts.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 20V11M12 20V4M18 20v-6"/></svg>Charts</a>
+    <a href="Search.dc.html" aria-current="page" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#D4AF37;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4-4"/></svg>Search</a>
+    <a href="Playlists.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h12M4 12h12M4 17h7M19 14v6M16 17h6"/></svg>Playlists</a>
+    <a href="Account.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>Me</a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

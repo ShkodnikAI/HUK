@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How charts work</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="min-height:1000px;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif">
+  <header style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:20px 40px;border-bottom:1px solid #2C2D34">
+    <a href="DesktopRadio.dc.html" style="display:flex;align-items:baseline;gap:14px;text-decoration:none">
+      <span style="font-family:'Cormorant Garamond',serif;font-weight:600;font-size:34px;line-height:1"><span style="color:#D4AF37">H</span><span style="color:#8B8C8E">UK</span></span>
+      <span style="font-size:10px;letter-spacing:0.34em;color:#D4AF37;font-weight:500">FREE INTERNET RADIO</span>
+    </a>
+    <a href="DesktopCharts.dc.html" style="min-height:44px;display:flex;align-items:center;font-size:14px;color:#ECEBE6;text-decoration:none">Back to charts</a>
+  </header>
+
+  <div style="display:flex;flex-wrap:wrap;gap:40px;max-width:1100px;margin:0 auto;padding:40px">
+    <article style="flex:1 1 560px;min-width:0;max-width:680px">
+      <h1 style="margin:0;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:48px;line-height:1.1">How charts work</h1>
+      <p style="margin:14px 0 0 0;font-size:17px;line-height:1.6;color:#ECEBE6">Charts are arithmetic, not opinion. The same listener actions always produce the same ranking, and AI never moves a track up or down.</p>
+
+      <h2 style="margin:28px 0 8px 0;font-size:20px;font-weight:600">What counts</h2>
+      <p style="margin:0;font-size:15px;line-height:1.65;color:#A3A4A9">A like counts as +1, a dislike as -1, adding a track to a playlist as +1.5. Listening to at least 80% of a track counts +0.5, once per day per listener, and the same again on another day. Skipping a playlist track early counts -0.5. Dislikes are private: nobody sees them, including the artist.</p>
+
+      <h2 style="margin:28px 0 8px 0;font-size:20px;font-weight:600">Newer matters more</h2>
+      <p style="margin:0;font-size:15px;line-height:1.65;color:#A3A4A9">Every action loses half of its weight every 7 days, so charts follow what people enjoy now.</p>
+
+      <h2 style="margin:28px 0 8px 0;font-size:20px;font-weight:600">Few votes cannot win</h2>
+      <p style="margin:0;font-size:15px;line-height:1.65;color:#A3A4A9">We rank by a cautious estimate of how much people like a track (the lower bound of a 95% confidence interval), not by the raw share of likes. Five likes out of five rank below 199 out of 200. A track needs 10 different listeners to enter a chart.</p>
+
+      <h2 style="margin:28px 0 8px 0;font-size:20px;font-weight:600">Fair play</h2>
+      <p style="margin:0;font-size:15px;line-height:1.65;color:#A3A4A9">Bursts of votes and suspicious patterns are flagged and count as zero. Reactions only unlock after a listener has actually listened for 30 seconds.</p>
+
+      <h2 style="margin:28px 0 8px 0;font-size:20px;font-weight:600">Fresh tracks get a chance</h2>
+      <p style="margin:0;font-size:15px;line-height:1.65;color:#A3A4A9">A small share of airtime goes to new tracks so they can be heard before they have votes. [Exact share: from the scheduler settings.]</p>
+    </article>
+
+    <aside aria-label="Legal" style="flex:1 1 260px;min-width:0;align-self:flex-start;padding:20px;border-radius:16px;background:#23242A;border:1px solid #34353C">
+      <h2 style="margin:0 0 10px 0;font-size:13px;font-weight:600;letter-spacing:0.08em;color:#D4AF37">LEGAL</h2>
+      <a href="HowCharts.dc.html" style="min-height:44px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:15px">Terms of use</a>
+      <a href="HowCharts.dc.html" style="min-height:44px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:15px">Privacy policy</a>
+      <a href="HowCharts.dc.html" style="min-height:44px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:15px">Copyright and takedown</a>
+      <p style="margin:10px 0 0 0;font-size:12px;line-height:1.55;color:#A3A4A9">[These pages are written after the legal review. Until then the links lead here.]</p>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

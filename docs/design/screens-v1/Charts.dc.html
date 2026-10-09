@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Charts</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="position:relative;width:390px;height:844px;overflow:hidden;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif">
+  <header style="padding:22px 20px 0 20px">
+    <h1 style="margin:0;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:36px;line-height:1.1">Charts</h1>
+    <p style="margin:6px 0 0 0;font-size:13px;color:#A3A4A9">Top 100, updated weekly. Computed by a fixed formula, not by AI. <a href="HowCharts.dc.html" style="color:#D4AF37">How charts work</a></p>
+  </header>
+
+  <div role="tablist" aria-label="Chart type" style="display:flex;gap:8px;padding:16px 20px 0 20px;overflow:hidden">
+    <button type="button" role="tab" aria-selected="true" style="min-height:44px;padding:0 16px;border-radius:22px;border:1px solid #D4AF37;background:#2C2D34;color:#D4AF37;font:600 13px 'Inter',sans-serif">Language</button>
+    <button type="button" role="tab" aria-selected="false" style="min-height:44px;padding:0 16px;border-radius:22px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 13px 'Inter',sans-serif">Style</button>
+    <button type="button" role="tab" aria-selected="false" style="min-height:44px;padding:0 16px;border-radius:22px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 13px 'Inter',sans-serif">Direction</button>
+    <button type="button" role="tab" aria-selected="false" style="min-height:44px;padding:0 16px;border-radius:22px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 13px 'Inter',sans-serif">Instrumental</button>
+  </div>
+  <div style="padding:12px 20px 0 20px">
+    <button type="button" style="width:100%;min-height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-radius:12px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 14px 'Inter',sans-serif"><span>English</span><span style="color:#A3A4A9">Change</span></button>
+  </div>
+
+  <ol style="list-style:none;margin:14px 0 0 0;padding:0 20px">
+    <li style="display:flex;align-items:center;gap:12px;min-height:64px;border-bottom:1px solid #2C2D34">
+      <span style="width:28px;font-size:20px;font-weight:600;color:#D4AF37;text-align:center">1</span>
+      <div style="flex:1;min-width:0"><a href="Track.dc.html" style="display:block;font-size:15px;font-weight:600;color:#ECEBE6;text-decoration:none">Track title</a><span style="font-size:13px;color:#A3A4A9">Artist name</span></div>
+      <span style="font-size:12px;color:#7FC8A9">Up 2</span>
+    </li>
+    <li style="display:flex;align-items:center;gap:12px;min-height:64px;border-bottom:1px solid #2C2D34">
+      <span style="width:28px;font-size:20px;font-weight:600;color:#ECEBE6;text-align:center">2</span>
+      <div style="flex:1;min-width:0"><a href="Track.dc.html" style="display:block;font-size:15px;font-weight:600;color:#ECEBE6;text-decoration:none">Track title</a><span style="font-size:13px;color:#A3A4A9">Artist name</span></div>
+      <span style="font-size:12px;color:#A3A4A9">Same</span>
+    </li>
+    <li style="display:flex;align-items:center;gap:12px;min-height:64px;border-bottom:1px solid #2C2D34">
+      <span style="width:28px;font-size:20px;font-weight:600;color:#ECEBE6;text-align:center">3</span>
+      <div style="flex:1;min-width:0"><a href="Track.dc.html" style="display:block;font-size:15px;font-weight:600;color:#ECEBE6;text-decoration:none">Track title</a><span style="font-size:13px;color:#A3A4A9">Artist name</span></div>
+      <span style="font-size:12px;color:#E58B84">Down 1</span>
+    </li>
+    <li style="display:flex;align-items:center;gap:12px;min-height:64px;border-bottom:1px solid #2C2D34">
+      <span style="width:28px;font-size:20px;font-weight:600;color:#ECEBE6;text-align:center">4</span>
+      <div style="flex:1;min-width:0"><a href="Track.dc.html" style="display:block;font-size:15px;font-weight:600;color:#ECEBE6;text-decoration:none">Track title</a><span style="font-size:13px;color:#A3A4A9">Artist name</span></div>
+      <span style="padding:2px 8px;border-radius:10px;border:1px solid #D4AF37;font-size:11px;color:#D4AF37">New</span>
+    </li>
+    <li style="display:flex;align-items:center;gap:12px;min-height:64px;border-bottom:1px solid #2C2D34">
+      <span style="width:28px;font-size:20px;font-weight:600;color:#ECEBE6;text-align:center">5</span>
+      <div style="flex:1;min-width:0"><a href="Track.dc.html" style="display:block;font-size:15px;font-weight:600;color:#ECEBE6;text-decoration:none">Track title</a><span style="font-size:13px;color:#A3A4A9">Artist name</span></div>
+      <span style="font-size:12px;color:#7FC8A9">Up 4</span>
+    </li>
+    <li style="display:flex;align-items:center;gap:12px;min-height:64px">
+      <span style="width:28px;font-size:20px;font-weight:600;color:#ECEBE6;text-align:center">6</span>
+      <div style="flex:1;min-width:0"><a href="Track.dc.html" style="display:block;font-size:15px;font-weight:600;color:#ECEBE6;text-decoration:none">Track title</a><span style="font-size:13px;color:#A3A4A9">Artist name</span></div>
+      <span style="font-size:12px;color:#A3A4A9">Same</span>
+    </li>
+  </ol>
+  <p style="margin:12px 20px 0 20px;font-size:12px;line-height:1.5;color:#A3A4A9">A track enters a chart after 10 different listeners have reacted. Categories with fewer than 20 tracks roll up into their parent.</p>
+
+  <nav aria-label="Main" style="position:absolute;left:0;right:0;bottom:0;height:68px;background:#1F2025;border-top:1px solid #34353C;display:flex">
+    <a href="Main.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M7.500 7.500a6 6 0 0 0 0 9M16.500 7.500a6 6 0 0 1 0 9M4.500 4.500a10 10 0 0 0 0 15M19.500 4.500a10 10 0 0 1 0 15"/></svg>Radio</a>
+    <a href="Charts.dc.html" aria-current="page" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#D4AF37;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 20V11M12 20V4M18 20v-6"/></svg>Charts</a>
+    <a href="Search.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4-4"/></svg>Search</a>
+    <a href="Playlists.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h12M4 12h12M4 17h7M19 14v6M16 17h6"/></svg>Playlists</a>
+    <a href="Account.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>Me</a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
