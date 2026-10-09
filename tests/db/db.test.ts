@@ -846,6 +846,192 @@ describe.skipIf(!databaseUrl)("charts (H-305)", () => {
   });
 });
 
+describe.skipIf(!databaseUrl)("account export and deletion (H-214)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  /** A user with the full data inventory: profile, artist profile, track, consents, playlist, reaction, comment, listen event, report. */
+  async function fullUser(tag: string) {
+    const user = await db.user.create({
+      data: { email: `${tag}-${Date.now()}@test.example`, name: `${tag} Name`, image: `https://host.test/${tag}.png`, role: "ARTIST" },
+    });
+    const session = await db.session.create({
+      data: { userId: user.id, sessionToken: `tok-${user.id}`, expires: new Date(Date.now() + 86_400_000) },
+    });
+    const profile = await db.artistProfile.create({
+      data: { userId: user.id, handle: `${tag}-${Math.floor(Math.random() * 1e9)}`, displayName: `${tag} Artist`, bio: "bio" },
+    });
+    const track = await db.track.create({ data: { artistId: profile.id, title: `${tag} track`, status: "APPROVED", available: true } });
+    await db.consent.createMany({
+      data: [
+        { userId: user.id, document: "tos", version: "0.0-draft", ipHash: null },
+        { userId: user.id, document: "artist-terms", version: "0.0-draft", ipHash: null },
+      ],
+    });
+    const playlist = await db.playlist.create({ data: { ownerId: user.id, name: `${tag} list`, visibility: "PRIVATE" } });
+    await db.session.create({ data: { userId: user.id, sessionToken: `auth-tok-${user.id}`, expires: new Date(Date.now() + 86_400_000) } });
+    await db.account.create({ data: { userId: user.id, type: "oauth", provider: "test", providerAccountId: `acc-${user.id}` } });
+    await db.verificationToken.create({ data: { identifier: user.email, token: `vt-${user.id}`, expires: new Date(Date.now() + 3_600_000) } });
+    return { user, token: session.sessionToken, profile, track, playlist };
+  }
+
+  it("the export contains exactly the caller's rows — nothing of anybody else's", async () => {
+    const a = await fullUser("exp-a");
+    const b = await fullUser("exp-b");
+    // Cross-signals: each reacts to the other's track, comments on it, listens.
+    await db.reaction.create({ data: { userId: a.user.id, trackId: b.track.id, type: "LIKE", ipHash: null } });
+    await db.reaction.create({ data: { userId: b.user.id, trackId: a.track.id, type: "LIKE", ipHash: null } });
+    await db.comment.create({ data: { trackId: b.track.id, authorId: a.user.id, body: "my comment", status: "HELD" } });
+    await db.comment.create({ data: { trackId: a.track.id, authorId: b.user.id, body: "their comment", status: "HELD" } });
+    await db.listenEvent.create({ data: { userId: a.user.id, trackId: b.track.id, mode: "RADIO", msListened: 30_000, completed: true } });
+    await db.report.create({ data: { targetType: "TRACK", targetId: b.track.id, reporterId: a.user.id, reason: "check please", status: "OPEN" } });
+
+    const { exportUserData } = await import("@/server/account/service");
+    const doc = (await exportUserData(a.user, { client: db })) as {
+      profile: { email: string };
+      tracks: Array<{ title: string }>;
+      reactions: Array<{ trackId: string }>;
+      comments: Array<{ body: string }>;
+      listenEvents: unknown[];
+      reports: Array<{ reason: string }>;
+      consents: Array<{ document: string }>;
+      playlists: Array<{ name: string }>;
+    };
+    expect(doc.profile.email).toBe(a.user.email);
+    expect(doc.tracks.map((t) => t.title)).toEqual(["exp-a track"]);
+    expect(doc.reactions).toHaveLength(1);
+    expect(doc.reactions[0].trackId).toBe(b.track.id); // a's reaction ON b's track is a's data
+    expect(doc.comments.map((c) => c.body)).toEqual(["my comment"]);
+    expect(doc.listenEvents).toHaveLength(1);
+    expect(doc.reports.map((r) => r.reason)).toEqual(["check please"]);
+    expect(doc.consents.map((c) => c.document).sort()).toEqual(["artist-terms", "tos"]);
+    expect(doc.playlists.map((p) => p.name)).toEqual(["exp-a list"]);
+    // Nothing of b's anywhere in the document (cross-references to b's
+    // track id are fine — they are part of a's own rows).
+    const raw = JSON.stringify(doc);
+    expect(raw).not.toContain(b.user.email);
+    expect(raw).not.toContain("exp-b track");
+    expect(raw).not.toContain("their comment");
+    expect(raw).not.toContain("exp-b list");
+    expect(raw).not.toContain(b.user.id);
+  });
+
+  it("deletion: wrong confirmEmail changes nothing; the erase takes down the tracks, anonymises and wipes; a second delete is refused", async () => {
+    const u = await fullUser("del");
+    const other = await fullUser("stay");
+    await db.reaction.create({ data: { userId: u.user.id, trackId: other.track.id, type: "LIKE", ipHash: null } });
+    const comment = await db.comment.create({ data: { trackId: other.track.id, authorId: u.user.id, body: "will be anonymised", status: "VISIBLE" } });
+    await db.reaction.create({ data: { userId: other.user.id, trackId: u.track.id, type: "LIKE", ipHash: null } });
+    await db.trackScore.create({ data: { trackId: u.track.id, categoryKey: "all", score: 5, nEff: 5, voters: 10 } });
+    await db.trackScore.create({ data: { trackId: other.track.id, categoryKey: "all", score: 5, nEff: 5, voters: 10 } });
+    // The author's track is on the schedule tomorrow — it must leave the air.
+    const slot = await db.broadcastSlot.create({
+      data: {
+        seq: BigInt(Date.now()),
+        trackId: u.track.id,
+        startsAt: new Date(Date.now() + 86_400_000),
+        endsAt: new Date(Date.now() + 86_400_000 + 180_000),
+      },
+    });
+
+    const { deleteAccount, deleteAccountSchema } = await import("@/server/account/service");
+    expect(deleteAccountSchema.safeParse({ confirmEmail: "" }).success).toBe(false);
+
+    // Wrong confirmEmail → 403, nothing changed.
+    await expect(deleteAccount(u.user, { confirmEmail: "wrong@test.example" }, { client: db })).rejects.toMatchObject({ status: 403 });
+    expect(await db.user.findUniqueOrThrow({ where: { id: u.user.id } })).toMatchObject({ email: u.user.email, deletedAt: null });
+    expect(await db.session.count({ where: { userId: u.user.id } })).toBe(2);
+
+    const result = await deleteAccount(u.user, { confirmEmail: u.user.email }, { client: db });
+    expect(result.deleted).toBe(true);
+    expect(result.scoresNote).toMatch(/ranking pass/);
+
+    // The user row: anonymised, no email anywhere; role LISTENER; deletedAt set.
+    const after = await db.user.findUniqueOrThrow({ where: { id: u.user.id } });
+    expect(after.email).toBe(`deleted-${u.user.id}@invalid.local`);
+    expect(after.email).not.toBe(u.user.email);
+    expect(after.name).toBeNull();
+    expect(after.image).toBeNull();
+    expect(after.role).toBe("LISTENER");
+    expect(after.deletedAt).not.toBeNull();
+
+    // Sessions, accounts, verification tokens, playlists, reactions: gone.
+    expect(await db.session.count({ where: { userId: u.user.id } })).toBe(0);
+    expect(await db.account.count({ where: { userId: u.user.id } })).toBe(0);
+    expect(await db.verificationToken.count({ where: { identifier: u.user.email } })).toBe(0);
+    expect(await db.playlist.count({ where: { ownerId: u.user.id } })).toBe(0);
+    expect(await db.reaction.count({ where: { userId: u.user.id } })).toBe(0);
+
+    // Comments remain, anonymised: author gone, text replaced.
+    const anonComment = await db.comment.findUniqueOrThrow({ where: { id: comment.id } });
+    expect(anonComment.authorId).toBeNull();
+    expect(anonComment.body).toBe("[removed]");
+
+    // The artist profile is gone; the tracks are TAKEN_DOWN and off the schedule.
+    expect(await db.artistProfile.count({ where: { userId: u.user.id } })).toBe(0);
+    expect((await db.track.findUniqueOrThrow({ where: { id: u.track.id } })).status).toBe("TAKEN_DOWN");
+    expect(await db.broadcastSlot.count({ where: { id: slot.id } })).toBe(0); // retired (H-212)
+
+    // Consent rows are kept (they prove what was accepted; hashes only).
+    expect(await db.consent.count({ where: { userId: u.user.id } })).toBe(2);
+
+    // Score rows of the affected tracks are dropped — the next ranking pass recomputes.
+    expect(await db.trackScore.count({ where: { trackId: u.track.id } })).toBe(0);
+    expect(await db.trackScore.count({ where: { trackId: other.track.id } })).toBe(0);
+
+    // The audit row: account.deleted with the user id only, no email.
+    const audits = await db.auditLog.findMany({ where: { action: "account.deleted" } });
+    expect(audits).toHaveLength(1);
+    expect(audits[0].targetId).toBe(u.user.id);
+    expect(JSON.stringify(audits[0].payload)).not.toContain(u.user.email);
+
+    // No row anywhere references the original email (done criteria).
+    for (const table of [db.user, db.session, db.account, db.verificationToken]) {
+      const rows = await (table as typeof db.user).findMany();
+      expect(JSON.stringify(rows)).not.toContain(u.user.email);
+    }
+
+    // A second delete through the route: the session is gone → 401, nothing changes.
+    const { DELETE } = await import("@/app/api/me/route");
+    const second = await DELETE(
+      new Request("http://localhost:3000/api/me", {
+        method: "DELETE",
+        headers: { origin: "http://localhost:3000", cookie: `${SESSION_COOKIE}=tok-${u.user.id}`, "content-type": "application/json" },
+        body: JSON.stringify({ confirmEmail: u.user.email }),
+      }),
+      { params: Promise.resolve({}) },
+    );
+    expect(second.status).toBe(401);
+    expect((await db.user.findUniqueOrThrow({ where: { id: u.user.id } })).email).toBe(`deleted-${u.user.id}@invalid.local`);
+  });
+
+  it("the export rate limit: the 4th call in a day is 429", async () => {
+    const { user, token } = await fullUser("rate");
+    const { GET } = await import("@/app/api/me/export/route");
+    for (let i = 0; i < 3; i++) {
+      const res = await GET(
+        new Request("http://localhost:3000/api/me/export", { headers: { cookie: `${SESSION_COOKIE}=${token}` } }),
+        { params: Promise.resolve({}) },
+      );
+      expect(res.status).toBe(200);
+    }
+    const fourth = await GET(
+      new Request("http://localhost:3000/api/me/export", { headers: { cookie: `${SESSION_COOKIE}=${token}` } }),
+      { params: Promise.resolve({}) },
+    );
+    expect(fourth.status).toBe(429);
+    expect(fourth.headers.get("retry-after")).toBeTruthy();
+  });
+});
+
 describe.skipIf(!databaseUrl)("rate limiter (H-103)", () => {
   const db = makeClient();
 
