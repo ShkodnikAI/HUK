@@ -406,6 +406,39 @@
      "banned": 403
     }
    }
-  ]
+  ],
+  "/api/charts": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 200,
+    "LISTENER": 200,
+    "ARTIST": 200,
+    "MODERATOR": 200,
+    "ADMIN": 200,
+    "banned": 200
+   }
+  },
+  "/api/charts/:category": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 404,
+    "LISTENER": 404,
+    "ARTIST": 404,
+    "MODERATOR": 404,
+    "ADMIN": 404,
+    "banned": 404
+   }
+  },
+  "/api/charts/:category/archive": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 404,
+    "LISTENER": 404,
+    "ARTIST": 404,
+    "MODERATOR": 404,
+    "ADMIN": 404,
+    "banned": 404
+   }
+  }
  }
 }
