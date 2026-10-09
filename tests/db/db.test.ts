@@ -4217,7 +4217,10 @@ describe.skipIf(!databaseUrl)("broadcast audio cache (H-112, D14)", () => {
     expect((await db.track.findUnique({ where: { id } }))!.status).toBe("SUSPENDED");
     const runs = await db.moderationRun.findMany({ where: { trackId: id } });
     expect(runs.some((r) => r.verdict === "REVIEW" && r.stage === "TECHNICAL")).toBe(true);
-    expect(await db.broadcastSlot.count({ where: { trackId: id } })).toBe(0); // retired from air
+    // Retired from air: NO future slot survives; the live slot ends now.
+    expect(await db.broadcastSlot.count({ where: { trackId: id, startsAt: { gt: new Date() } } })).toBe(0);
+    const liveRow = await db.broadcastSlot.findFirst({ where: { trackId: id } });
+    expect(liveRow!.endsAt.getTime()).toBeLessThanOrEqual(Date.now());
     expect(existsSync(fileOf(id))).toBe(false); // the bytes were never kept
     const audits = await db.auditLog.findMany({ where: { targetId: id } });
     expect(audits.some((a) => a.action === "source.mismatch")).toBe(true);
@@ -4312,7 +4315,9 @@ describe.skipIf(!databaseUrl)("broadcast audio cache (H-112, D14)", () => {
 
     // Takedown: retireTrackFromAir purges the copy in the same code path.
     const c = await mkTrack("evict-c");
-    await mkSlot(c, 3n, t0 + 400_000, t0 + 500_000);
+    // Started 26 s before the pass: the first backoff attempt is due, the
+    // fetch succeeds, and only THEN does the takedown purge apply.
+    await mkSlot(c, 3n, t0 + 375_000, t0 + 500_000);
     await runAudioCachePass({ ...seam, now: () => t0 + 401_000 }, state);
     expect(existsSync(fileOf(c))).toBe(true);
     await retireTrackFromAir(c, new Date(), db);
