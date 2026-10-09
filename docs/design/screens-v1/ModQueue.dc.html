@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Moderator queue</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="min-height:900px;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif">
+  <header style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:16px 40px;border-bottom:1px solid #2C2D34">
+    <div style="display:flex;align-items:baseline;gap:14px">
+      <span style="font-family:'Cormorant Garamond',serif;font-weight:600;font-size:30px;line-height:1"><span style="color:#D4AF37">H</span><span style="color:#8B8C8E">UK</span></span>
+      <span style="font-size:12px;letter-spacing:0.14em;color:#A3A4A9">MODERATION</span>
+    </div>
+    <nav aria-label="Moderation" style="display:flex;flex-wrap:wrap;gap:8px">
+      <a href="ModQueue.dc.html" aria-current="page" style="min-height:44px;padding:0 16px;display:flex;align-items:center;border-radius:22px;background:#2C2D34;color:#D4AF37;text-decoration:none;font-size:14px;font-weight:600">Tracks <span style="margin-left:8px;padding:1px 8px;border-radius:10px;background:#D4AF37;color:#1A1B1F;font-size:12px">3</span></a>
+      <a href="ModQueue.dc.html" style="min-height:44px;padding:0 16px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:14px">Reports <span style="margin-left:8px;padding:1px 8px;border-radius:10px;background:#34353C;font-size:12px">1</span></a>
+      <a href="ModQueue.dc.html" style="min-height:44px;padding:0 16px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:14px">Held comments <span style="margin-left:8px;padding:1px 8px;border-radius:10px;background:#34353C;font-size:12px">2</span></a>
+      <a href="Admin.dc.html" style="min-height:44px;padding:0 16px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:14px">Admin</a>
+    </nav>
+  </header>
+
+  <main style="display:flex;flex-wrap:wrap;gap:24px;padding:24px 40px">
+    <section aria-label="Tracks waiting" style="flex:1 1 440px;min-width:0">
+      <p style="margin:0 0 12px 0;font-size:13px;color:#A3A4A9">Riskiest first, then oldest. A reason is shown for every row.</p>
+      <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px">
+        <li style="padding:14px 16px;border-radius:14px;background:#23242A;border:1px solid #D4AF37">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><span style="font-size:15px;font-weight:600">Track title · Artist name</span><span style="padding:3px 10px;border-radius:10px;background:#3B2523;color:#E58B84;font-size:12px;font-weight:600">High attention</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"><span style="padding:3px 9px;border-radius:10px;background:#2C2D34;font-size:12px">Fingerprint: strong match</span><span style="padding:3px 9px;border-radius:10px;background:#2C2D34;font-size:12px">Speech check: not run</span><span style="padding:3px 9px;border-radius:10px;background:#2C2D34;font-size:12px">Waiting 2 h</span></div>
+        </li>
+        <li style="padding:14px 16px;border-radius:14px;background:#23242A;border:1px solid #34353C">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><span style="font-size:15px;font-weight:600">Track title · Artist name</span><span style="padding:3px 10px;border-radius:10px;background:#3A3217;color:#D4AF37;font-size:12px;font-weight:600">Check</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"><span style="padding:3px 9px;border-radius:10px;background:#2C2D34;font-size:12px">Fingerprint: not checked</span><span style="padding:3px 9px;border-radius:10px;background:#2C2D34;font-size:12px">Waiting 5 h</span></div>
+        </li>
+        <li style="padding:14px 16px;border-radius:14px;background:#23242A;border:1px solid #34353C">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><span style="font-size:15px;font-weight:600">Track title · Artist name</span><span style="padding:3px 10px;border-radius:10px;background:#1F3A30;color:#7FC8A9;font-size:12px;font-weight:600">Routine</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"><span style="padding:3px 9px;border-radius:10px;background:#2C2D34;font-size:12px">All earlier checks passed</span><span style="padding:3px 9px;border-radius:10px;background:#2C2D34;font-size:12px">Waiting 1 day</span></div>
+        </li>
+      </ul>
+    </section>
+
+    <section aria-label="Track detail" style="flex:1 1 480px;min-width:0;padding:20px;border-radius:16px;background:#23242A;border:1px solid #34353C">
+      <h1 style="margin:0;font-size:22px;font-weight:600">Track title</h1>
+      <p style="margin:4px 0 0 0;font-size:14px;color:#A3A4A9">Artist name · English · declared AI tool: [tool], plan: [plan]</p>
+      <h2 style="margin:18px 0 8px 0;font-size:13px;font-weight:600;letter-spacing:0.08em;color:#D4AF37">CHECKS</h2>
+      <dl style="margin:0;display:grid;grid-template-columns:150px 1fr;row-gap:6px;font-size:14px">
+        <dt style="color:#A3A4A9">Declarations</dt><dd style="margin:0">Complete</dd>
+        <dt style="color:#A3A4A9">Technical</dt><dd style="margin:0">Passed (3:41)</dd>
+        <dt style="color:#A3A4A9">Fingerprint</dt><dd style="margin:0;color:#E58B84">Strong match with a known recording: [title, artist]</dd>
+        <dt style="color:#A3A4A9">Speech to text</dt><dd style="margin:0">Not run (needs a person)</dd>
+        <dt style="color:#A3A4A9">AI assessment</dt><dd style="margin:0">Off. A person decides.</dd>
+      </dl>
+      <h2 style="margin:18px 0 8px 0;font-size:13px;font-weight:600;letter-spacing:0.08em;color:#D4AF37">LISTEN AND READ</h2>
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:12px;background:#1F2025;border:1px solid #34353C"><button type="button" aria-label="Play preview" style="width:44px;height:44px;border-radius:50%;border:0;background:#D4AF37;color:#1A1B1F;display:flex;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button><span style="font-size:13px;color:#A3A4A9">Temporary stream from the artist's link. Nothing is stored.</span></div>
+      <label for="why" style="display:block;margin-top:16px;font-size:13px;color:#A3A4A9;margin-bottom:6px">Statement of reasons (required to reject; shown to the artist)</label>
+      <textarea id="why" rows="3" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif;resize:none"></textarea>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px">
+        <button type="button" style="min-height:48px;padding:0 24px;border-radius:12px;border:0;background:#D4AF37;color:#1A1B1F;font:600 14px 'Inter',sans-serif">Approve</button>
+        <button type="button" style="min-height:48px;padding:0 24px;border-radius:12px;border:1px solid #E58B84;background:none;color:#E58B84;font:600 14px 'Inter',sans-serif">Reject</button>
+        <button type="button" style="min-height:48px;padding:0 24px;border-radius:12px;border:1px solid #34353C;background:#2C2D34;color:#ECEBE6;font:500 14px 'Inter',sans-serif">Ask the artist</button>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

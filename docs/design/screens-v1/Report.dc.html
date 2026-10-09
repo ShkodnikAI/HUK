@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Report a track</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="position:relative;width:390px;height:844px;overflow:hidden;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif;padding:0 20px">
+  <div style="display:flex;align-items:center;padding:12px 0 0 0;margin-left:-12px">
+    <a href="Main.dc.html" aria-label="Close" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#ECEBE6"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></a>
+  </div>
+  <h1 style="margin:4px 0 4px 0;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:34px;line-height:1.1">Report</h1>
+  <p style="margin:0 0 16px 0;font-size:14px;color:#A3A4A9">Track title · Artist name</p>
+
+  <fieldset style="margin:0;padding:0;border:0">
+    <legend style="padding:0;margin-bottom:8px;font-size:13px;color:#A3A4A9">What is the problem?</legend>
+    <label style="display:flex;align-items:center;gap:12px;min-height:48px;padding:0 14px;border-radius:12px;background:#23242A;border:1px solid #D4AF37;font-size:14px"><input type="radio" name="r" checked style="width:22px;height:22px;accent-color:#D4AF37">It copies someone's recording or work</label>
+    <label style="display:flex;align-items:center;gap:12px;min-height:48px;margin-top:6px;padding:0 14px;border-radius:12px;background:#23242A;border:1px solid #34353C;font-size:14px"><input type="radio" name="r" style="width:22px;height:22px;accent-color:#D4AF37">Threats or calls for violence</label>
+    <label style="display:flex;align-items:center;gap:12px;min-height:48px;margin-top:6px;padding:0 14px;border-radius:12px;background:#23242A;border:1px solid #34353C;font-size:14px"><input type="radio" name="r" style="width:22px;height:22px;accent-color:#D4AF37">Hate or harassment aimed at people</label>
+    <label style="display:flex;align-items:center;gap:12px;min-height:48px;margin-top:6px;padding:0 14px;border-radius:12px;background:#23242A;border:1px solid #34353C;font-size:14px"><input type="radio" name="r" style="width:22px;height:22px;accent-color:#D4AF37">Private data or fraud</label>
+    <label style="display:flex;align-items:center;gap:12px;min-height:48px;margin-top:6px;padding:0 14px;border-radius:12px;background:#23242A;border:1px solid #34353C;font-size:14px"><input type="radio" name="r" style="width:22px;height:22px;accent-color:#D4AF37">Something else</label>
+  </fieldset>
+
+  <label for="d" style="display:block;margin-top:16px;font-size:13px;color:#A3A4A9;margin-bottom:6px">Details (optional)</label>
+  <textarea id="d" rows="4" placeholder="What should we look at?" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif;resize:none"></textarea>
+
+  <div style="margin-top:14px;padding:12px 14px;border-radius:12px;background:#23242A;border:1px solid #34353C;font-size:12px;line-height:1.55;color:#A3A4A9"><strong style="color:#ECEBE6">Rights holder?</strong> Send your notice to [contact address, to be set by the legal review]. This form does not replace a formal notice.</div>
+
+  <a href="Main.dc.html" style="margin-top:18px;min-height:52px;border-radius:12px;background:#D4AF37;color:#1A1B1F;font:600 15px 'Inter',sans-serif;display:flex;align-items:center;justify-content:center;text-decoration:none">Send report</a>
+  <p style="margin:10px 0 0 0;font-size:12px;line-height:1.5;color:#A3A4A9;text-align:center">A person looks at every report. Thank you for helping keep HUK clean.</p>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

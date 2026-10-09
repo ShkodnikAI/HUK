@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Admin: invites</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="min-height:700px;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif">
+  <header style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:16px 40px;border-bottom:1px solid #2C2D34">
+    <div style="display:flex;align-items:baseline;gap:14px">
+      <span style="font-family:'Cormorant Garamond',serif;font-weight:600;font-size:30px;line-height:1"><span style="color:#D4AF37">H</span><span style="color:#8B8C8E">UK</span></span>
+      <span style="font-size:12px;letter-spacing:0.14em;color:#A3A4A9">ADMIN</span>
+    </div>
+    <nav aria-label="Moderation" style="display:flex;flex-wrap:wrap;gap:8px">
+      <a href="ModQueue.dc.html" style="min-height:44px;padding:0 16px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:14px">Moderation</a>
+      <a href="Admin.dc.html" aria-current="page" style="min-height:44px;padding:0 16px;display:flex;align-items:center;border-radius:22px;background:#2C2D34;color:#D4AF37;text-decoration:none;font-size:14px;font-weight:600">Invites</a>
+    </nav>
+  </header>
+
+  <main style="max-width:960px;margin:0 auto;padding:32px 40px">
+    <h1 style="margin:0;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:40px;line-height:1.1">Invites</h1>
+    <p style="margin:8px 0 0 0;font-size:14px;color:#A3A4A9">The beta is invite-only. A code works once.</p>
+
+    <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;margin-top:20px;padding:16px;border-radius:14px;background:#23242A;border:1px solid #34353C">
+      <div style="flex:1 1 220px"><label for="role" style="display:block;font-size:13px;color:#A3A4A9;margin-bottom:6px">Grants</label><button id="role" type="button" style="width:100%;min-height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif"><span>Listener account</span><span style="color:#A3A4A9">v</span></button></div>
+      <div style="flex:1 1 220px"><label for="note" style="display:block;font-size:13px;color:#A3A4A9;margin-bottom:6px">Note (who is it for)</label><input id="note" type="text" placeholder="[name or channel]" style="width:100%;box-sizing:border-box;min-height:48px;padding:0 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif"></div>
+      <button type="button" style="min-height:48px;padding:0 24px;border-radius:12px;border:0;background:#D4AF37;color:#1A1B1F;font:600 14px 'Inter',sans-serif">Create code</button>
+    </div>
+
+    <div style="margin-top:20px;overflow-x:auto;border-radius:14px;border:1px solid #34353C;background:#23242A">
+      <table style="width:100%;min-width:620px;border-collapse:collapse;font-size:14px">
+        <caption style="position:absolute;left:-9999px">Invite codes</caption>
+        <thead><tr style="text-align:left;font-size:12px;letter-spacing:0.08em;color:#A3A4A9"><th scope="col" style="padding:14px 20px">CODE</th><th scope="col" style="padding:14px 8px">GRANTS</th><th scope="col" style="padding:14px 8px">NOTE</th><th scope="col" style="padding:14px 20px">STATUS</th></tr></thead>
+        <tbody>
+          <tr style="border-top:1px solid #2C2D34"><td style="padding:14px 20px;font-weight:600;letter-spacing:0.08em">HUK-XXXX-XXXX</td><td style="padding:14px 8px">Listener</td><td style="padding:14px 8px;color:#A3A4A9">[note]</td><td style="padding:14px 20px"><span style="padding:3px 10px;border-radius:10px;background:#3A3217;color:#D4AF37;font-size:12px;font-weight:600">Unused</span></td></tr>
+          <tr style="border-top:1px solid #2C2D34"><td style="padding:14px 20px;font-weight:600;letter-spacing:0.08em">HUK-XXXX-XXXX</td><td style="padding:14px 8px">Artist</td><td style="padding:14px 8px;color:#A3A4A9">[note]</td><td style="padding:14px 20px"><span style="padding:3px 10px;border-radius:10px;background:#1F3A30;color:#7FC8A9;font-size:12px;font-weight:600">Redeemed</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin:14px 0 0 0;font-size:13px;line-height:1.55;color:#A3A4A9">Daily limits (submissions per platform and per author, spend caps) come from the server settings, not from this page.</p>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":700}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

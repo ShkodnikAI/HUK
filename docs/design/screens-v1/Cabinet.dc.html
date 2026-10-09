@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Artist cabinet</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="position:relative;width:390px;height:1000px;overflow:hidden;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif;padding:0 20px">
+  <header style="display:flex;align-items:center;justify-content:space-between;padding-top:22px">
+    <h1 style="margin:0;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:34px;line-height:1.1">My tracks</h1>
+    <a href="Submit.dc.html" style="min-height:44px;padding:0 16px;border-radius:22px;background:#D4AF37;color:#1A1B1F;font:600 13px 'Inter',sans-serif;display:flex;align-items:center;text-decoration:none">Submit</a>
+  </header>
+  <p style="margin:6px 0 0 0;font-size:13px;color:#A3A4A9">Artist name · <a href="Profile.dc.html" style="color:#D4AF37">Public profile</a> · today 1 of 2 submissions used</p>
+
+  <ul style="list-style:none;margin:16px 0 0 0;padding:0;display:flex;flex-direction:column;gap:10px">
+    <li style="padding:14px 16px;border-radius:14px;background:#23242A;border:1px solid #34353C">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">Track title</span><span style="padding:3px 10px;border-radius:10px;background:#1F3A30;color:#7FC8A9;font-size:12px;font-weight:600">On air</span></div>
+      <div style="margin-top:8px;display:flex;gap:16px;font-size:12px;color:#A3A4A9"><span>Likes [n]</span><span>Listens [n]</span><span>Playlists [n]</span></div>
+      <a href="Submit.dc.html" style="margin-top:4px;min-height:44px;display:flex;align-items:center;font-size:13px;color:#D4AF37;text-decoration:none">Edit lyrics</a>
+    </li>
+    <li style="padding:14px 16px;border-radius:14px;background:#23242A;border:1px solid #34353C">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">Track title</span><span style="padding:3px 10px;border-radius:10px;background:#3A3217;color:#D4AF37;font-size:12px;font-weight:600">In review</span></div>
+      <p style="margin:8px 0 0 0;font-size:13px;line-height:1.45;color:#A3A4A9">Waiting for a person to check it. Usually quick; you will get an email.</p>
+    </li>
+    <li style="padding:14px 16px;border-radius:14px;background:#23242A;border:1px solid #34353C">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">Track title</span><span style="padding:3px 10px;border-radius:10px;background:#3B2523;color:#E58B84;font-size:12px;font-weight:600">Not accepted</span></div>
+      <p style="margin:8px 0 0 0;font-size:13px;line-height:1.45;color:#A3A4A9">Reason: [statement of reasons from the moderator]. You can fix the cause and submit again.</p>
+    </li>
+    <li style="padding:14px 16px;border-radius:14px;background:#23242A;border:1px solid #34353C">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">Track title</span><span style="padding:3px 10px;border-radius:10px;background:#3A3217;color:#D4AF37;font-size:12px;font-weight:600">Paused</span></div>
+      <p style="margin:8px 0 0 0;font-size:13px;line-height:1.45;color:#A3A4A9">Your link stopped answering or the file changed. Restore it and we will re-check automatically.</p>
+    </li>
+    <li style="padding:14px 16px;border-radius:14px;background:#23242A;border:1px solid #34353C">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">Track title</span><span style="padding:3px 10px;border-radius:10px;background:#3B2523;color:#E58B84;font-size:12px;font-weight:600">Removed</span></div>
+      <p style="margin:8px 0 0 0;font-size:13px;line-height:1.45;color:#A3A4A9">Taken off the air after a report. Reason: [statement of reasons]. <a href="Report.dc.html" style="color:#D4AF37">Ask for a second look</a></p>
+    </li>
+  </ul>
+  <p style="margin:14px 0 0 0;font-size:12px;line-height:1.5;color:#A3A4A9">Dislikes are never shown to anyone, including you.</p>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

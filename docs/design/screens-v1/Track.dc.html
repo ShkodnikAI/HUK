@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Track page</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="position:relative;width:390px;height:960px;overflow:hidden;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif">
+  <div style="display:flex;align-items:center;gap:6px;padding:12px 8px 0 8px">
+    <a href="Charts.dc.html" aria-label="Back to charts" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#ECEBE6"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></a>
+    <span style="font-size:13px;color:#A3A4A9">Track</span>
+  </div>
+
+  <div style="padding:6px 20px 0 20px">
+    <h1 style="margin:0;font-size:24px;font-weight:600;line-height:1.25">Track title</h1>
+    <a href="Profile.dc.html" style="display:inline-block;margin-top:4px;font-size:15px;color:#D4AF37;text-decoration:none">Artist name</a>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">
+      <span style="padding:4px 10px;border-radius:12px;background:#2C2D34;font-size:12px">English</span>
+      <span style="padding:4px 10px;border-radius:12px;background:#2C2D34;font-size:12px">Electronic</span>
+      <span style="padding:4px 10px;border-radius:12px;background:#2C2D34;font-size:12px">Ambient</span>
+    </div>
+  </div>
+
+  <section aria-label="Declared by the artist" style="margin:16px 20px 0 20px;padding:14px 16px;border-radius:14px;background:#23242A;border:1px solid #34353C">
+    <h2 style="margin:0 0 8px 0;font-size:13px;font-weight:600;letter-spacing:0.08em;color:#D4AF37">DECLARED BY THE ARTIST</h2>
+    <dl style="margin:0;display:grid;grid-template-columns:110px 1fr;row-gap:6px;font-size:13px;line-height:1.45">
+      <dt style="color:#A3A4A9">Made with AI</dt><dd style="margin:0">Yes: [tool name], [plan at the time]</dd>
+      <dt style="color:#A3A4A9">Human part</dt><dd style="margin:0">[Artist description of their contribution]</dd>
+      <dt style="color:#A3A4A9">Use on HUK</dt><dd style="margin:0">Radio and playlists</dd>
+    </dl>
+    <p style="margin:10px 0 0 0;font-size:12px;line-height:1.5;color:#A3A4A9">HUK does not verify authorship. The artist is responsible for these statements.</p>
+  </section>
+
+  <div style="display:flex;gap:10px;margin:14px 20px 0 20px">
+    <button type="button" style="flex:1;min-height:48px;border-radius:12px;border:0;background:#D4AF37;color:#1A1B1F;font:600 14px 'Inter',sans-serif">Add to playlist</button>
+    <a href="Report.dc.html" style="min-width:96px;min-height:48px;border-radius:12px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 14px 'Inter',sans-serif;display:flex;align-items:center;justify-content:center;text-decoration:none">Report</a>
+  </div>
+
+  <section aria-label="Lyrics" style="margin:16px 20px 0 20px;padding:14px 16px;border-radius:14px;background:#23242A;border:1px solid #34353C">
+    <div style="display:flex;justify-content:space-between;align-items:baseline"><h2 style="margin:0;font-size:13px;font-weight:600;letter-spacing:0.08em;color:#D4AF37">LYRICS</h2><span style="font-size:12px;color:#A3A4A9">Added by the artist</span></div>
+    <p style="margin:8px 0 0 0;font-size:14px;line-height:1.55;max-height:66px;overflow:hidden;white-space:pre-line">[Lyrics line one]
+[Lyrics line two]
+[Lyrics line three]</p>
+    <button type="button" style="margin-top:6px;min-height:44px;padding:0;border:0;background:none;color:#D4AF37;font:600 13px 'Inter',sans-serif">Show all lyrics</button>
+  </section>
+
+  <section aria-label="Comments" style="margin:20px 20px 0 20px">
+    <h2 style="margin:0 0 10px 0;font-size:16px;font-weight:600">Comments</h2>
+    <div style="padding:12px 14px;border-radius:12px;background:#23242A;border:1px solid #34353C">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:#A3A4A9"><span>Listener name</span><span>2 days ago</span></div>
+      <p style="margin:6px 0 0 0;font-size:14px;line-height:1.5">Comment text appears here after a moderator has approved it.</p>
+    </div>
+    <label for="c" style="display:block;margin:14px 0 6px 0;font-size:13px;color:#A3A4A9">Add a comment</label>
+    <textarea id="c" rows="3" placeholder="Be kind. No links." style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 14px 'Inter',sans-serif;resize:none"></textarea>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:12px">
+      <span style="font-size:12px;line-height:1.4;color:#A3A4A9">Available after 30 s of listening. A moderator approves new comments before they appear.</span>
+      <button type="button" style="min-height:44px;padding:0 18px;border-radius:12px;border:0;background:#34353C;color:#ECEBE6;font:600 14px 'Inter',sans-serif">Send</button>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

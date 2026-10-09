@@ -1,0 +1,254 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "Account.dc.html": {
+      "h": 844,
+      "title": "Account and data",
+      "w": 390,
+      "x": 0,
+      "y": 1224
+    },
+    "Admin.dc.html": {
+      "expand": "fill",
+      "h": 700,
+      "title": "Admin: invites",
+      "w": 1280,
+      "x": 0,
+      "y": 5588
+    },
+    "Cabinet.dc.html": {
+      "h": 1000,
+      "title": "Artist cabinet",
+      "w": 390,
+      "x": 470,
+      "y": 2448
+    },
+    "Charts.dc.html": {
+      "h": 844,
+      "title": "Charts",
+      "w": 390,
+      "x": 470,
+      "y": 0
+    },
+    "CheckEmail.dc.html": {
+      "h": 844,
+      "title": "Check your email",
+      "w": 390,
+      "x": 940,
+      "y": 1224
+    },
+    "DesktopCharts.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "title": "Desktop charts",
+      "w": 1280,
+      "x": 1360,
+      "y": 4308
+    },
+    "DesktopRadio.dc.html": {
+      "expand": "fill",
+      "h": 820,
+      "title": "Desktop radio",
+      "w": 1280,
+      "x": 0,
+      "y": 4308
+    },
+    "HowCharts.dc.html": {
+      "expand": "fill",
+      "h": 1000,
+      "title": "How charts work",
+      "w": 1280,
+      "x": 1360,
+      "y": 5588
+    },
+    "Invite.dc.html": {
+      "h": 844,
+      "title": "Invite code",
+      "w": 390,
+      "x": 1410,
+      "y": 1224
+    },
+    "Main.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "title": "Radio (now playing)",
+      "w": 390,
+      "x": 0,
+      "y": 0
+    },
+    "ModQueue.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "title": "Moderator queue",
+      "w": 1280,
+      "x": 2720,
+      "y": 4308
+    },
+    "Playlists.dc.html": {
+      "h": 844,
+      "title": "My playlists",
+      "w": 390,
+      "x": 1410,
+      "y": 0
+    },
+    "Profile.dc.html": {
+      "h": 1010,
+      "title": "Artist profile",
+      "w": 390,
+      "x": 940,
+      "y": 2448
+    },
+    "Report.dc.html": {
+      "h": 844,
+      "title": "Report a track",
+      "w": 390,
+      "x": 1410,
+      "y": 2448
+    },
+    "Search.dc.html": {
+      "h": 844,
+      "title": "Search",
+      "w": 390,
+      "x": 1880,
+      "y": 0
+    },
+    "SignIn.dc.html": {
+      "h": 844,
+      "title": "Sign in",
+      "w": 390,
+      "x": 470,
+      "y": 1224
+    },
+    "States.dc.html": {
+      "h": 844,
+      "title": "Quiet, offline, not found",
+      "w": 390,
+      "x": 1880,
+      "y": 2448
+    },
+    "Submit.dc.html": {
+      "h": 1470,
+      "title": "Submit a track",
+      "w": 390,
+      "x": 0,
+      "y": 2448
+    },
+    "Track.dc.html": {
+      "h": 960,
+      "title": "Track page",
+      "w": 390,
+      "x": 940,
+      "y": 0
+    },
+    "Leaving.dc.html": {
+      "x": 2350,
+      "y": 2448,
+      "w": 390,
+      "h": 844,
+      "title": "Leaving HUK (external link)"
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-10-09T12:00:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "n1": {
+      "fill": "gray",
+      "text": "Look: brand v1 (dark, gold #D4AF37, background #1A1B1F). Inter for UI, Cormorant Garamond only for the wordmark and large display text. Dislikes are private: the listener sees only their own reaction, never a count. Status is always a word as well as a colour.",
+      "w": 380,
+      "x": 2350,
+      "y": 0
+    },
+    "n2": {
+      "fill": "gray",
+      "text": "Assumptions: sign-in is by emailed link only (no passwords); invite-only beta; the light theme is not designed because its palette is unconfirmed (BRAND.md section 3).",
+      "w": 380,
+      "x": 1880,
+      "y": 1224
+    },
+    "n3": {
+      "fill": "gray",
+      "text": "Radio screen, comment ticker: the last approved comments across the station, newest first, plain text only (no links or images). Pauses on touch or hover. With reduced-motion it stops and can be scrolled by hand. Each item opens that track's comments. Comment text is a placeholder.",
+      "w": 380,
+      "x": 2350,
+      "y": 300
+    },
+    "n4": {
+      "fill": "gray",
+      "text": "Lyrics are optional. The artist adds them on Submit and can edit or remove them from the cabinet at any time. Shown as plain text on the track page, never as HTML or links. If a track is removed, its lyrics go with it. Length limit [max] is set in the settings.",
+      "w": 380,
+      "x": 2350,
+      "y": 600
+    },
+    "t1": {
+      "kind": "title1",
+      "maxW": 2270,
+      "text": "Listener, phone",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    },
+    "t2": {
+      "kind": "title1",
+      "maxW": 1800,
+      "text": "Access and account, phone",
+      "w": 240,
+      "x": 0,
+      "y": 924
+    },
+    "t3": {
+      "kind": "title1",
+      "maxW": 2270,
+      "text": "Artist and system states, phone",
+      "w": 240,
+      "x": 0,
+      "y": 2148
+    },
+    "t4": {
+      "kind": "title1",
+      "maxW": 4000,
+      "text": "Desktop: listener and moderator",
+      "w": 240,
+      "x": 0,
+      "y": 4008
+    },
+    "t5": {
+      "kind": "title1",
+      "maxW": 2640,
+      "text": "Desktop: admin and information",
+      "w": 240,
+      "x": 0,
+      "y": 5288
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Charts.dc.html",
+    "Track.dc.html",
+    "Playlists.dc.html",
+    "Search.dc.html",
+    "Account.dc.html",
+    "SignIn.dc.html",
+    "CheckEmail.dc.html",
+    "Invite.dc.html",
+    "Submit.dc.html",
+    "Cabinet.dc.html",
+    "Profile.dc.html",
+    "Leaving.dc.html",
+    "Report.dc.html",
+    "States.dc.html",
+    "DesktopRadio.dc.html",
+    "DesktopCharts.dc.html",
+    "ModQueue.dc.html",
+    "Admin.dc.html",
+    "HowCharts.dc.html"
+  ],
+  "pages": [],
+  "title": "HUK \u2014 Screens v1"
+}

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Desktop charts</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="min-height:900px;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif">
+  <header style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:20px 40px;border-bottom:1px solid #2C2D34">
+    <div style="display:flex;align-items:baseline;gap:14px">
+      <span style="font-family:'Cormorant Garamond',serif;font-weight:600;font-size:34px;line-height:1"><span style="color:#D4AF37">H</span><span style="color:#8B8C8E">UK</span></span>
+      <span style="font-size:10px;letter-spacing:0.34em;color:#D4AF37;font-weight:500">FREE INTERNET RADIO</span>
+    </div>
+    <nav aria-label="Main" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+      <a href="DesktopRadio.dc.html" style="min-height:44px;padding:0 16px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:14px">Radio</a>
+      <a href="DesktopCharts.dc.html" aria-current="page" style="min-height:44px;padding:0 16px;display:flex;align-items:center;border-radius:22px;background:#2C2D34;color:#D4AF37;text-decoration:none;font-size:14px;font-weight:600">Charts</a>
+      <a href="Search.dc.html" style="min-height:44px;padding:0 16px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:14px">Search</a>
+      <a href="Playlists.dc.html" style="min-height:44px;padding:0 16px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:14px">Playlists</a>
+      <a href="Account.dc.html" style="min-height:44px;padding:0 16px;display:flex;align-items:center;color:#ECEBE6;text-decoration:none;font-size:14px">Me</a>
+    </nav>
+  </header>
+
+  <main style="max-width:1000px;margin:0 auto;padding:40px">
+    <h1 style="margin:0;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:48px;line-height:1.1">Charts</h1>
+    <p style="margin:8px 0 0 0;font-size:15px;color:#A3A4A9">Top 100, updated weekly. Computed by a fixed formula, not by AI. <a href="HowCharts.dc.html" style="color:#D4AF37">How charts work</a></p>
+
+    <div role="tablist" aria-label="Chart type" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:24px">
+      <button type="button" role="tab" aria-selected="true" style="min-height:44px;padding:0 20px;border-radius:22px;border:1px solid #D4AF37;background:#2C2D34;color:#D4AF37;font:600 14px 'Inter',sans-serif">Language</button>
+      <button type="button" role="tab" aria-selected="false" style="min-height:44px;padding:0 20px;border-radius:22px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 14px 'Inter',sans-serif">Style</button>
+      <button type="button" role="tab" aria-selected="false" style="min-height:44px;padding:0 20px;border-radius:22px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 14px 'Inter',sans-serif">Direction</button>
+      <button type="button" role="tab" aria-selected="false" style="min-height:44px;padding:0 20px;border-radius:22px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 14px 'Inter',sans-serif">Instrumental</button>
+      <button type="button" style="min-height:44px;padding:0 18px;margin-left:auto;border-radius:12px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 14px 'Inter',sans-serif">English: change</button>
+    </div>
+
+    <div style="margin-top:20px;overflow-x:auto;border-radius:14px;border:1px solid #34353C;background:#23242A">
+      <table style="width:100%;min-width:640px;border-collapse:collapse;font-size:15px">
+        <caption style="position:absolute;left:-9999px">Top tracks, English</caption>
+        <thead><tr style="text-align:left;font-size:12px;letter-spacing:0.08em;color:#A3A4A9"><th scope="col" style="padding:14px 20px;width:70px">RANK</th><th scope="col" style="padding:14px 8px">TRACK</th><th scope="col" style="padding:14px 8px">ARTIST</th><th scope="col" style="padding:14px 8px">LENGTH</th><th scope="col" style="padding:14px 20px">MOVE</th></tr></thead>
+        <tbody>
+          <tr style="border-top:1px solid #2C2D34"><td style="padding:14px 20px;font-size:20px;font-weight:600;color:#D4AF37">1</td><td style="padding:14px 8px"><a href="Track.dc.html" style="color:#ECEBE6;text-decoration:none;font-weight:600">Track title</a></td><td style="padding:14px 8px;color:#A3A4A9">Artist name</td><td style="padding:14px 8px;color:#A3A4A9">3:41</td><td style="padding:14px 20px;color:#7FC8A9;font-size:13px">Up 2</td></tr>
+          <tr style="border-top:1px solid #2C2D34"><td style="padding:14px 20px;font-size:20px;font-weight:600">2</td><td style="padding:14px 8px"><a href="Track.dc.html" style="color:#ECEBE6;text-decoration:none;font-weight:600">Track title</a></td><td style="padding:14px 8px;color:#A3A4A9">Artist name</td><td style="padding:14px 8px;color:#A3A4A9">5:02</td><td style="padding:14px 20px;color:#A3A4A9;font-size:13px">Same</td></tr>
+          <tr style="border-top:1px solid #2C2D34"><td style="padding:14px 20px;font-size:20px;font-weight:600">3</td><td style="padding:14px 8px"><a href="Track.dc.html" style="color:#ECEBE6;text-decoration:none;font-weight:600">Track title</a></td><td style="padding:14px 8px;color:#A3A4A9">Artist name</td><td style="padding:14px 8px;color:#A3A4A9">2:58</td><td style="padding:14px 20px;color:#E58B84;font-size:13px">Down 1</td></tr>
+          <tr style="border-top:1px solid #2C2D34"><td style="padding:14px 20px;font-size:20px;font-weight:600">4</td><td style="padding:14px 8px"><a href="Track.dc.html" style="color:#ECEBE6;text-decoration:none;font-weight:600">Track title</a></td><td style="padding:14px 8px;color:#A3A4A9">Artist name</td><td style="padding:14px 8px;color:#A3A4A9">4:10</td><td style="padding:14px 20px"><span style="padding:2px 8px;border-radius:10px;border:1px solid #D4AF37;font-size:11px;color:#D4AF37">New</span></td></tr>
+          <tr style="border-top:1px solid #2C2D34"><td style="padding:14px 20px;font-size:20px;font-weight:600">5</td><td style="padding:14px 8px"><a href="Track.dc.html" style="color:#ECEBE6;text-decoration:none;font-weight:600">Track title</a></td><td style="padding:14px 8px;color:#A3A4A9">Artist name</td><td style="padding:14px 8px;color:#A3A4A9">3:33</td><td style="padding:14px 20px;color:#7FC8A9;font-size:13px">Up 4</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin:14px 0 0 0;font-size:13px;line-height:1.55;color:#A3A4A9">A track enters a chart after 10 different listeners have reacted. Categories with fewer than 20 tracks roll up into their parent category.</p>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

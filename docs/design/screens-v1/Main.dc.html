@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Radio: now playing</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+@keyframes huk-ticker{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.huk-ticker-track{display:flex;width:max-content;animation:huk-ticker 40s linear infinite}
+.huk-ticker:hover .huk-ticker-track,.huk-ticker:focus-within .huk-ticker-track,.huk-ticker:active .huk-ticker-track{animation-play-state:paused}
+@media (prefers-reduced-motion:reduce){.huk-ticker{overflow-x:auto!important}.huk-ticker-track{animation:none}.huk-ticker-dup{display:none!important}}
+</style>
+</helmet>
+<div style="position:relative;width:390px;height:844px;overflow:hidden;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif">
+  <header style="display:flex;align-items:center;justify-content:space-between;padding:20px 20px 0 20px">
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-family:'Cormorant Garamond',serif;font-weight:600;font-size:30px;line-height:1;letter-spacing:0.02em"><span style="color:#D4AF37">H</span><span style="color:#8B8C8E">UK</span></span>
+      <span style="font-size:9px;letter-spacing:0.34em;color:#D4AF37;font-weight:500">FREE INTERNET RADIO</span>
+    </div>
+    <button type="button" aria-label="Language: English" style="min-height:44px;min-width:44px;padding:0 14px;border-radius:22px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 13px 'Inter',sans-serif">EN</button>
+  </header>
+
+  <div style="display:flex;align-items:center;gap:8px;padding:22px 20px 0 20px">
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:12px;background:#2C2D34;font-size:11px;font-weight:600;letter-spacing:0.12em;color:#D4AF37"><span style="width:7px;height:7px;border-radius:50%;background:#D4AF37"></span>LIVE</span>
+    <span style="font-size:12px;color:#A3A4A9">One shared timeline for everyone</span>
+  </div>
+
+  <section aria-label="Now playing" style="margin:16px 20px 0 20px;border-radius:20px;background:#23242A;border:1px solid #34353C;padding:22px 20px 18px 20px">
+    <div aria-hidden="true" style="height:120px;display:flex;align-items:center;justify-content:center;gap:4px">
+      <span style="width:5px;height:34px;border-radius:3px;background:#D4AF37;opacity:0.5"></span>
+      <span style="width:5px;height:58px;border-radius:3px;background:#D4AF37;opacity:0.65"></span>
+      <span style="width:5px;height:84px;border-radius:3px;background:#D4AF37;opacity:0.8"></span>
+      <span style="width:5px;height:46px;border-radius:3px;background:#D4AF37;opacity:0.7"></span>
+      <span style="width:5px;height:100px;border-radius:3px;background:#D4AF37"></span>
+      <span style="width:5px;height:70px;border-radius:3px;background:#D4AF37;opacity:0.85"></span>
+      <span style="width:5px;height:38px;border-radius:3px;background:#D4AF37;opacity:0.6"></span>
+      <span style="width:5px;height:92px;border-radius:3px;background:#D4AF37;opacity:0.9"></span>
+      <span style="width:5px;height:60px;border-radius:3px;background:#D4AF37;opacity:0.7"></span>
+      <span style="width:5px;height:30px;border-radius:3px;background:#D4AF37;opacity:0.5"></span>
+      <span style="width:5px;height:76px;border-radius:3px;background:#D4AF37;opacity:0.8"></span>
+      <span style="width:5px;height:44px;border-radius:3px;background:#D4AF37;opacity:0.6"></span>
+    </div>
+    <h1 style="margin:14px 0 2px 0;font-size:22px;font-weight:600;line-height:1.25">Track title</h1>
+    <a href="Profile.dc.html" style="font-size:15px;color:#D4AF37;text-decoration:none">Artist name</a>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">
+      <span style="padding:4px 10px;border-radius:12px;background:#2C2D34;font-size:12px;color:#ECEBE6">English</span>
+      <span style="padding:4px 10px;border-radius:12px;background:#2C2D34;font-size:12px;color:#ECEBE6">Electronic</span>
+      <span style="padding:4px 10px;border-radius:12px;border:1px solid #D4AF37;font-size:12px;color:#D4AF37">AI-assisted</span>
+    </div>
+    <div style="margin-top:18px">
+      <div style="height:4px;border-radius:2px;background:#34353C"><div style="width:38%;height:4px;border-radius:2px;background:#D4AF37"></div></div>
+      <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:12px;color:#A3A4A9"><span>1:24</span><span>3:41</span></div>
+    </div>
+  </section>
+
+  <div style="display:flex;align-items:center;justify-content:center;gap:18px;margin-top:22px">
+    <button type="button" aria-label="Dislike (private)" style="width:56px;height:56px;border-radius:50%;border:1px solid #34353C;background:#23242A;color:#ECEBE6;display:flex;align-items:center;justify-content:center">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14V4H5v10h5zm0 0 3 6a2 2 0 0 0 2-2v-4h4.5a1.5 1.5 0 0 0 1.5-1.8l-1.2-6A2 2 0 0 0 18.8 4H10"/></svg>
+    </button>
+    <button type="button" aria-label="Pause" style="width:80px;height:80px;border-radius:50%;border:0;background:#D4AF37;color:#1A1B1F;display:flex;align-items:center;justify-content:center">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
+    <button type="button" aria-label="Like" style="width:56px;height:56px;border-radius:50%;border:1px solid #34353C;background:#23242A;color:#ECEBE6;display:flex;align-items:center;justify-content:center">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.600-7 10-7 10z"/></svg>
+    </button>
+  </div>
+  <p style="margin:12px 40px 0 40px;text-align:center;font-size:12px;line-height:1.5;color:#A3A4A9">Likes and dislikes unlock after 30 seconds of listening. Your dislikes stay private.</p>
+
+  <div style="display:flex;gap:10px;margin:16px 20px 0 20px">
+    <button type="button" style="flex:1;min-height:44px;border-radius:12px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 14px 'Inter',sans-serif">Add to playlist</button>
+    <a href="Report.dc.html" style="flex:1;min-height:44px;border-radius:12px;border:1px solid #34353C;background:#23242A;color:#ECEBE6;font:500 14px 'Inter',sans-serif;display:flex;align-items:center;justify-content:center;text-decoration:none">Report</a>
+  </div>
+
+  <div style="margin:14px 20px 0 20px;display:flex;border-radius:12px;background:#23242A;border:1px solid #34353C;padding:4px">
+    <button type="button" aria-pressed="true" style="flex:1;min-height:40px;border-radius:9px;border:0;background:#2C2D34;color:#D4AF37;font:600 13px 'Inter',sans-serif">Radio</button>
+    <a href="Playlists.dc.html" style="flex:1;min-height:40px;border-radius:9px;color:#A3A4A9;font:500 13px 'Inter',sans-serif;display:flex;align-items:center;justify-content:center;text-decoration:none">My playlist</a>
+  </div>
+
+  <section aria-label="Latest comments" class="huk-ticker" style="margin:12px 0 0 0;height:40px;overflow:hidden;display:flex;align-items:center;border-top:1px solid #2C2D34;border-bottom:1px solid #2C2D34;background:#1F2025">
+    <div class="huk-ticker-track">
+      <a href="Track.dc.html" style="display:flex;align-items:center;gap:8px;min-height:40px;padding:0 22px;white-space:nowrap;font-size:13px;color:#ECEBE6;text-decoration:none"><span style="color:#D4AF37;font-weight:600">Listener</span><span>[comment text]</span><span style="color:#A3A4A9;font-size:11px">on Track title · 2 min</span></a>
+      <a href="Track.dc.html" style="display:flex;align-items:center;gap:8px;min-height:40px;padding:0 22px;white-space:nowrap;font-size:13px;color:#ECEBE6;text-decoration:none"><span style="color:#D4AF37;font-weight:600">Listener</span><span>[comment text]</span><span style="color:#A3A4A9;font-size:11px">on Track title · 5 min</span></a>
+      <a href="Track.dc.html" style="display:flex;align-items:center;gap:8px;min-height:40px;padding:0 22px;white-space:nowrap;font-size:13px;color:#ECEBE6;text-decoration:none"><span style="color:#D4AF37;font-weight:600">Listener</span><span>[comment text]</span><span style="color:#A3A4A9;font-size:11px">on Track title · 9 min</span></a>
+      <a class="huk-ticker-dup" aria-hidden="true" tabindex="-1" href="Track.dc.html" style="display:flex;align-items:center;gap:8px;min-height:40px;padding:0 22px;white-space:nowrap;font-size:13px;color:#ECEBE6;text-decoration:none"><span style="color:#D4AF37;font-weight:600">Listener</span><span>[comment text]</span><span style="color:#A3A4A9;font-size:11px">on Track title · 2 min</span></a>
+      <a class="huk-ticker-dup" aria-hidden="true" tabindex="-1" href="Track.dc.html" style="display:flex;align-items:center;gap:8px;min-height:40px;padding:0 22px;white-space:nowrap;font-size:13px;color:#ECEBE6;text-decoration:none"><span style="color:#D4AF37;font-weight:600">Listener</span><span>[comment text]</span><span style="color:#A3A4A9;font-size:11px">on Track title · 5 min</span></a>
+      <a class="huk-ticker-dup" aria-hidden="true" tabindex="-1" href="Track.dc.html" style="display:flex;align-items:center;gap:8px;min-height:40px;padding:0 22px;white-space:nowrap;font-size:13px;color:#ECEBE6;text-decoration:none"><span style="color:#D4AF37;font-weight:600">Listener</span><span>[comment text]</span><span style="color:#A3A4A9;font-size:11px">on Track title · 9 min</span></a>
+    </div>
+  </section>
+
+  <nav aria-label="Main" style="position:absolute;left:0;right:0;bottom:0;height:68px;background:#1F2025;border-top:1px solid #34353C;display:flex">
+    <a href="Main.dc.html" aria-current="page" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#D4AF37;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M7.500 7.500a6 6 0 0 0 0 9M16.500 7.500a6 6 0 0 1 0 9M4.500 4.500a10 10 0 0 0 0 15M19.500 4.500a10 10 0 0 1 0 15"/></svg>Radio</a>
+    <a href="Charts.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 20V11M12 20V4M18 20v-6"/></svg>Charts</a>
+    <a href="Search.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4-4"/></svg>Search</a>
+    <a href="Playlists.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h12M4 12h12M4 17h7M19 14v6M16 17h6"/></svg>Playlists</a>
+    <a href="Account.dc.html" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;color:#A3A4A9;text-decoration:none"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>Me</a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

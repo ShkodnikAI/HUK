@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Submit a track</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1A1B1F;font-family:'Inter',system-ui,sans-serif}
+a{color:#D4AF37}
+</style>
+</helmet>
+<div style="position:relative;width:390px;height:1470px;overflow:hidden;box-sizing:border-box;background:#1A1B1F;color:#ECEBE6;font-family:'Inter',system-ui,sans-serif;padding:0 20px 28px 20px">
+  <div style="display:flex;align-items:center;gap:6px;padding:12px 0 0 0;margin-left:-12px">
+    <a href="Cabinet.dc.html" aria-label="Back to the cabinet" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#ECEBE6"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></a>
+  </div>
+  <h1 style="margin:4px 0 4px 0;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:34px;line-height:1.1">Submit a track</h1>
+  <p style="margin:0 0 18px 0;font-size:13px;line-height:1.5;color:#A3A4A9">You keep your file. Give us a link; HUK stores the link and a fingerprint only.</p>
+
+  <label for="t" style="display:block;font-size:13px;color:#A3A4A9;margin-bottom:6px">Title</label>
+  <input id="t" type="text" placeholder="Track title" style="width:100%;box-sizing:border-box;min-height:48px;padding:0 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif">
+
+  <label for="u" style="display:block;margin-top:14px;font-size:13px;color:#A3A4A9;margin-bottom:6px">Link to the audio file (https)</label>
+  <input id="u" type="url" placeholder="https://" style="width:100%;box-sizing:border-box;min-height:48px;padding:0 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif">
+  <p style="margin:6px 0 0 0;font-size:12px;line-height:1.45;color:#A3A4A9">Must stay reachable and unchanged. If the file changes or disappears, the track is paused and re-checked.</p>
+
+  <div style="display:flex;gap:10px;margin-top:14px">
+    <div style="flex:1"><label for="l" style="display:block;font-size:13px;color:#A3A4A9;margin-bottom:6px">Language of lyrics</label><button id="l" type="button" style="width:100%;min-height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif"><span>English</span><span style="color:#A3A4A9">v</span></button></div>
+    <div style="flex:1"><label for="d" style="display:block;font-size:13px;color:#A3A4A9;margin-bottom:6px">Direction (optional)</label><button id="d" type="button" style="width:100%;min-height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif"><span>Electronic</span><span style="color:#A3A4A9">v</span></button></div>
+  </div>
+  <label style="margin-top:14px;display:flex;align-items:center;gap:12px;min-height:44px;font-size:14px"><input type="checkbox" style="width:22px;height:22px;accent-color:#D4AF37"> Instrumental (no vocals)</label>
+
+  <h2 style="margin:20px 0 8px 0;font-size:13px;font-weight:600;letter-spacing:0.08em;color:#D4AF37">HOW IT WAS MADE</h2>
+  <label style="display:flex;align-items:center;gap:12px;min-height:44px;font-size:14px"><input type="checkbox" checked style="width:22px;height:22px;accent-color:#D4AF37"> Made with an AI tool</label>
+  <div style="display:flex;gap:10px;margin-top:6px">
+    <div style="flex:1"><label for="a1" style="display:block;font-size:13px;color:#A3A4A9;margin-bottom:6px">AI tool</label><input id="a1" type="text" placeholder="Tool name" style="width:100%;box-sizing:border-box;min-height:48px;padding:0 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif"></div>
+    <div style="flex:1"><label for="a2" style="display:block;font-size:13px;color:#A3A4A9;margin-bottom:6px">Plan when you made it</label><input id="a2" type="text" placeholder="Free, paid..." style="width:100%;box-sizing:border-box;min-height:48px;padding:0 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif"></div>
+  </div>
+  <label for="h" style="display:block;margin-top:14px;font-size:13px;color:#A3A4A9;margin-bottom:6px">What did you do yourself? (lyrics, melody, arrangement, edits)</label>
+  <textarea id="h" rows="3" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif;resize:none"></textarea>
+
+  <h2 style="margin:20px 0 8px 0;font-size:13px;font-weight:600;letter-spacing:0.08em;color:#D4AF37">LYRICS (OPTIONAL)</h2>
+  <label for="ly" style="display:block;font-size:13px;color:#A3A4A9;margin-bottom:6px">Add the words if you want listeners to read them</label>
+  <textarea id="ly" rows="6" placeholder="Verse 1..." style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:12px;border:1px solid #34353C;background:#1F2025;color:#ECEBE6;font:400 15px 'Inter',sans-serif;resize:none"></textarea>
+  <div style="display:flex;justify-content:space-between;gap:12px;margin-top:6px;font-size:12px;line-height:1.45;color:#A3A4A9"><span>Your own words only. Plain text, no links. You can edit or remove them at any time.</span><span style="white-space:nowrap">0 / [max]</span></div>
+
+  <h2 style="margin:20px 0 8px 0;font-size:13px;font-weight:600;letter-spacing:0.08em;color:#D4AF37">WHERE IT MAY PLAY</h2>
+  <label style="display:flex;gap:12px;padding:12px 14px;border-radius:12px;background:#23242A;border:1px solid #D4AF37;font-size:14px;line-height:1.45"><input type="radio" name="scope" checked style="width:22px;height:22px;accent-color:#D4AF37;flex:none"><span><strong>Radio and playlists</strong><br><span style="color:#A3A4A9;font-size:13px">Listeners can add it to their own playlists.</span></span></label>
+  <label style="display:flex;gap:12px;margin-top:8px;padding:12px 14px;border-radius:12px;background:#23242A;border:1px solid #34353C;font-size:14px;line-height:1.45"><input type="radio" name="scope" style="width:22px;height:22px;accent-color:#D4AF37;flex:none"><span><strong>Radio only</strong><br><span style="color:#A3A4A9;font-size:13px">Plays on air only; no playlists.</span></span></label>
+
+  <label style="margin-top:18px;display:flex;gap:12px;font-size:13px;line-height:1.5;color:#ECEBE6"><input type="checkbox" style="width:22px;height:22px;accent-color:#D4AF37;flex:none">I made this track or have the right to broadcast it, and I accept the current <a href="HowCharts.dc.html" style="color:#D4AF37">terms</a>. [Warranty wording is set by the legal review.]</label>
+
+  <a href="Cabinet.dc.html" style="margin-top:20px;min-height:52px;border-radius:12px;background:#D4AF37;color:#1A1B1F;font:600 15px 'Inter',sans-serif;display:flex;align-items:center;justify-content:center;text-decoration:none">Submit for checking</a>
+  <p style="margin:10px 0 0 0;font-size:12px;line-height:1.5;color:#A3A4A9;text-align:center">Checks run automatically; a person reviews anything unclear. Daily limits apply.</p>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1470}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
