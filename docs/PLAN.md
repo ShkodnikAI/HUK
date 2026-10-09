@@ -50,6 +50,7 @@ published only after the record is on `main`. Where a published issue differs fr
 | H-215 | #85 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
 | H-216 | #86 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
 | H-217 | #87 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
+| H-504 | #89 | pulled forward from W5 (Owner, 2026-10-09) | open |
 
 ---
 
@@ -239,9 +240,7 @@ Done: forced budget exhaustion in staging stops moderation and alerts.
 Scope: nightly `pg_dump` off-box, documented restore, timed drill.
 Done: restore on a clean host within the target time; runbook in `docs/RUNBOOK.md`.
 
-**H-504 — Deployment.** `[process]` `OD` (hosting + payment channel, D4)
-Scope: VPS Docker Compose, Cloudflare setup, secrets handling, deploy and rollback runbook.
-Done: deploy from tag; rollback tested.
+**H-504 — Deployment.** `[process]` `OD` Issue #89. Pulled forward 2026-10-09: first deployment on the Owner's own 24/7 Linux server (Docker Compose + Cloudflare Tunnel), prod compose file, env check, update with automatic rollback, nightly backup and restore drill, runbook. A rented VPS (D4) is deferred and reuses the same files. Owner acceptance happens on the real host.
 
 **H-505 — Closed beta.** `[process]`
 Scope: invite-only, caps low, metrics, triage loop.
