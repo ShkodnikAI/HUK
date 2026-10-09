@@ -7,6 +7,7 @@ import { startScheduler } from "@/server/broadcast/scheduler";
 import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
 import { startMaintenance } from "@/server/maintenance/runner";
 import { sweepStaleTempFiles } from "@/server/sources/verify";
+import { runAudioCachePass, sweepCacheAtStartAsync } from "@/server/broadcast/audio-cache";
 import { runModerationPass } from "@/server/moderation/orchestrator";
 import { makeRankingJobs } from "@/server/ranking/job";
 
@@ -17,6 +18,16 @@ console.log(`[worker] booted pid=${process.pid} inviteOnly=${env.INVITE_ONLY}`);
 // S3 (H-202): remove moderation temp dirs a crashed previous run left behind.
 const swept = sweepStaleTempFiles();
 if (swept > 0) console.log(`[worker] swept ${swept} stale moderation temp dirs`);
+
+// H-112 (D14/S3): the broadcast cache directory is swept at start — anything
+// not in the current broadcast window is deleted (the worker is the only
+// writer and was down). In-window tracks survive the restart.
+try {
+  const cacheSwept = await sweepCacheAtStartAsync();
+  if (cacheSwept > 0) console.log(`[worker] swept ${cacheSwept} stray broadcast-cache entries (H-112)`);
+} catch (e) {
+  console.error(`[worker] broadcast-cache sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+}
 
 let stopping = false;
 
@@ -30,6 +41,7 @@ async function shutdown(signal: string): Promise<void> {
   await scheduler.stop(); // releases the advisory lock
   await maintenance.stop();
   clearInterval(moderationTimer);
+  clearInterval(cacheTimer);
   try {
     await moderationInFlight;
   } catch {
@@ -74,6 +86,25 @@ const moderationTimer = setInterval(() => {
     });
 }, MODERATION_TICK_MS);
 moderationTimer.unref?.();
+
+// H-112 (D14): the broadcast audio cache — leader-only (the broadcast
+// advisory lock held by this process is the gate, as for the scheduler),
+// every 15 s, non-overlapping in-process.
+const AUDIO_CACHE_TICK_MS = 15_000;
+let cacheInFlight: Promise<unknown> | null = null;
+const cacheTimer = setInterval(() => {
+  if (stopping || cacheInFlight || !scheduler.isLeader()) return;
+  cacheInFlight = runAudioCachePass()
+    .then((summary) => {
+      const active = summary.fetched + summary.failedSeries + summary.mismatched + summary.cacheFull + summary.skippedSlots + summary.evicted;
+      if (active > 0) console.log(`[audio-cache] pass: ${JSON.stringify(summary)}`);
+    })
+    .catch((e) => console.error(`[audio-cache] pass failed: ${e instanceof Error ? e.message : String(e)}`))
+    .finally(() => {
+      cacheInFlight = null;
+    });
+}, AUDIO_CACHE_TICK_MS);
+cacheTimer.unref?.();
 
 void scheduler.done().then(() => {
   console.log("[worker] scheduler stopped; lock released");

@@ -273,6 +273,9 @@ model TrackSource {
   verifiedAt   DateTime?
   failCount    Int            @default(0)
   lastError    String?
+  // H-112 (D14): cool-down after a failed broadcast-cache fetch series;
+  // the scheduler does not pick the track again until it passes (30 min).
+  cacheRetryAfter DateTime?
 
   track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
 }
