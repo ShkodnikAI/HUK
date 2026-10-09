@@ -1,7 +1,8 @@
 // Pure request builders and performers for the moderator console actions
-// (H-207). Every console action goes through the EXISTING APIs:
+// (H-207, H-303). Every console action goes through the EXISTING APIs:
 //   - track decisions      → POST /api/mod/tracks/resolve (H-207)
 //   - report resolutions   → POST /api/mod/reports/resolve (H-206)
+//   - comment decisions    → POST /api/mod/comments/:id (H-303)
 // The builders are pure so each action has a per-action contract test; the
 // components glue them to buttons and refresh the page afterwards.
 
@@ -16,9 +17,12 @@ export type ReportActionInput =
   | { action: "RESTRICT"; reportId: string; statementOfReasons: string; countryCode: string }
   | { action: "BAN"; reportId: string; statementOfReasons: string; banDays: number };
 
-export type BuiltRequest = { url: string; method: "POST"; body: string };
+export type CommentActionInput =
+  | { action: "APPROVE"; commentId: string }
+  | { action: "HIDE"; commentId: string; reason: string }
+  | { action: "REMOVE"; commentId: string; reason: string };
 
-export type ActionResult = { ok: boolean; status: number };
+export type BuiltRequest = { url: string; method: "POST"; body: string };
 
 export function buildTrackActionRequest(input: TrackActionInput): BuiltRequest {
   const url = "/api/mod/tracks/resolve";
@@ -68,6 +72,18 @@ export function buildReportActionRequest(input: ReportActionInput): BuiltRequest
   };
 }
 
+export function buildCommentActionRequest(input: CommentActionInput): BuiltRequest {
+  return {
+    url: `/api/mod/comments/${encodeURIComponent(input.commentId)}`,
+    method: "POST",
+    body: JSON.stringify(
+      input.action === "APPROVE"
+        ? { action: "APPROVE" }
+        : { action: input.action, reason: input.reason },
+    ),
+  };
+}
+
 type SameOriginFetch = (url: string, init: { method: "POST"; body: string; headers: Record<string, string> }) => Promise<Response>;
 
 const defaultFetch: SameOriginFetch = (url, init) =>
@@ -82,3 +98,5 @@ export async function performRequest(built: BuiltRequest, doFetch: SameOriginFet
   });
   return { ok: res.ok, status: res.status };
 }
+
+export type ActionResult = { ok: boolean; status: number };

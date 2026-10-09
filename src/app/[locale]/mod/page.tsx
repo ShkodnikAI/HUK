@@ -16,6 +16,7 @@ import { db } from "@/server/db";
 import { listOpenReports } from "@/server/reports/service";
 import { TrackActions } from "@/components/mod/track-actions";
 import { ReportActions } from "@/components/mod/report-actions";
+import { CommentActions } from "@/components/mod/comment-actions";
 import { TranscriptExcerpt } from "@/components/mod/transcript-excerpt";
 
 export const dynamic = "force-dynamic";
@@ -112,6 +113,45 @@ export async function loadModerationQueue(client: PrismaLike = db, take = 50): P
   return items;
 }
 
+export type CommentQueueItem = {
+  commentId: string;
+  body: string;
+  status: "HELD" | "VISIBLE" | "HIDDEN" | "REMOVED";
+  createdAt: Date;
+  trackId: string;
+  trackTitle: string;
+  parentId: string | null;
+  parentExcerpt: string | null;
+};
+
+/**
+ * The comment queue (H-303): HELD comments first (they wait for a
+ * decision), then HIDDEN ones (context for re-approval), oldest first.
+ * The context the moderator needs: the track, the body, the parent
+ * comment excerpt. Exported for the DB contract tests.
+ */
+export async function loadCommentQueue(client: PrismaLike = db, take = 50): Promise<CommentQueueItem[]> {
+  const rows = await client.comment.findMany({
+    where: { status: { in: ["HELD", "HIDDEN"] } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take,
+    include: {
+      track: { select: { id: true, title: true } },
+      parent: { select: { id: true, body: true } },
+    },
+  });
+  return rows.map((c) => ({
+    commentId: c.id,
+    body: c.body,
+    status: c.status,
+    createdAt: c.createdAt,
+    trackId: c.track.id,
+    trackTitle: c.track.title,
+    parentId: c.parent?.id ?? null,
+    parentExcerpt: c.parent?.body.slice(0, 200) ?? null,
+  }));
+}
+
 export default async function ModConsolePage() {
   const t = await getTranslations("mod");
 
@@ -135,7 +175,7 @@ export default async function ModConsolePage() {
   void actorId; // used by the audited APIs; the page itself only reads
 
   // ── 2. data, only reachable for MODERATOR/ADMIN ──
-  const [moderation, reports] = await Promise.all([loadModerationQueue(), listOpenReports()]);
+  const [moderation, comments, reports] = await Promise.all([loadModerationQueue(), loadCommentQueue(), listOpenReports()]);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -200,6 +240,31 @@ export default async function ModConsolePage() {
                 </div>
               ) : null}
               <TrackActions trackId={item.trackId} />
+            </article>
+          ))
+        )}
+      </section>
+
+      <section className="mt-10">
+        <h2 className="text-lg font-semibold">{t("commentsQueue")}</h2>
+        <p className="mt-1 text-xs text-neutral-500">{t("commentsHeldNote")}</p>
+        {comments.length === 0 ? (
+          <p className="mt-2 text-sm text-neutral-400">{t("noEntries")}</p>
+        ) : (
+          comments.map((item) => (
+            <article key={item.commentId} className="mt-4 rounded border border-neutral-700 p-4">
+              <h3 className="font-medium">{item.trackTitle}</h3>
+              {/* Untrusted text rendered as text only (S5). */}
+              <p className="mt-1 text-sm text-neutral-200">{item.body}</p>
+              {item.parentExcerpt ? (
+                <p className="mt-1 text-xs text-neutral-500">{t("commentParentExcerpt", { excerpt: item.parentExcerpt })}</p>
+              ) : null}
+              <p className="mt-1 text-xs text-neutral-500">
+                {t("commentStatus", { status: t(item.status === "HELD" ? "statusHeld" : "statusHidden") })}
+                {" · "}
+                {item.createdAt.toISOString()}
+              </p>
+              <CommentActions commentId={item.commentId} />
             </article>
           ))
         )}
