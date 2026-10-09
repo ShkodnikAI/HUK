@@ -66,6 +66,17 @@
     "banned": 403
    }
   },
+  "/api/me": {
+   "method": "DELETE",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 400,
+    "ARTIST": 400,
+    "MODERATOR": 400,
+    "ADMIN": 400,
+    "banned": 403
+   }
+  },
   "/api/artists": {
    "method": "POST",
    "expected": {
@@ -263,6 +274,17 @@
     "ARTIST": 422,
     "MODERATOR": 422,
     "ADMIN": 422,
+    "banned": 403
+   }
+  },
+  "/api/me/export": {
+   "method": "GET",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 200,
+    "ARTIST": 200,
+    "MODERATOR": 200,
+    "ADMIN": 200,
     "banned": 403
    }
   },
