@@ -1,7 +1,9 @@
 // POST /api/mod/tracks/resolve (H-207, S1): moderator decisions on the
 // moderation queue — approve, reject (with a mandatory statement of
-// reasons), restrict by country. MODERATOR/ADMIN only (requireRole), every
-// decision audited with the actor (see src/server/tracks/moderator-actions.ts).
+// reasons), restrict by country; H-402 adds SET_TERMS (replace the track's
+// confirmed taxonomy terms from the controlled vocabulary, any status).
+// MODERATOR/ADMIN only (requireRole), every decision audited with the
+// actor (see src/server/tracks/moderator-actions.ts).
 
 import { parseJson } from "@/server/http/parse";
 import { requireRole } from "@/server/guard";

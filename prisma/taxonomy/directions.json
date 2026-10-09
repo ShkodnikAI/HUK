@@ -1,0 +1,12 @@
+{
+  "electronic": "Electronic",
+  "rock": "Rock",
+  "pop": "Pop",
+  "hip-hop": "Hip-hop",
+  "jazz-blues": "Jazz & Blues",
+  "classical": "Classical",
+  "folk-world": "Folk & World",
+  "ambient-experimental": "Ambient & Experimental",
+  "metal": "Metal",
+  "soundtrack": "Soundtrack"
+}

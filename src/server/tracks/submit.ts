@@ -2,6 +2,11 @@
 // daily quotas and the invite gate — one transaction, PENDING for
 // moderation. Titles accept every script (NFC-normalised); identity comes
 // only from the guard; the client never names the uploader.
+// H-402: optional `style` and `direction` slugs validated against the
+// controlled vocabulary (prisma/taxonomy/*.json — free-text tags remain
+// impossible); confirmed TrackTerm rows are written in the same
+// transaction, the LANGUAGE term derived from the BCP-47 primary subtag
+// (pt-BR → pt, anything unlisted → other); `instrumental` stays a flag.
 
 import { z } from "zod";
 import { HttpError } from "@/server/http/errors";
@@ -13,6 +18,12 @@ import { probeDirectUrl } from "@/server/sources/direct-url";
 import { resolveAudiusTrack } from "@/server/sources/audius";
 import type { SafeLoader, SafeResolver } from "@/server/net/safe-fetch";
 import { CURRENT_ARTIST_TERMS_VERSION, CURRENT_TOS_VERSION } from "@/server/legal/versions";
+import {
+  isDirectionSlug,
+  isStyleSlug,
+  languageTermSlug,
+} from "@/server/taxonomy/vocabulary";
+import { attachConfirmedTerms, type TermRef } from "@/server/taxonomy/store";
 
 const CONTROL = /[\p{Cc}\p{Cf}]/u;
 const BCP47 = /^[a-zA-Z]{2,8}(-[a-zA-Z0-9]{1,8})*$/;
@@ -39,6 +50,8 @@ export const submissionSchema = z
       .regex(BCP47, "language must be a BCP-47 tag")
       .optional(),
     instrumental: z.boolean().default(false),
+    style: z.string().max(64).optional(),
+    direction: z.string().max(64).optional(),
     licenseScope: z.enum(["RADIO_ONLY", "RADIO_AND_PLAYLISTS"]),
     tosVersion: z.string().max(50),
   })
@@ -48,6 +61,12 @@ export const submissionSchema = z
     }
     if (!v.instrumental && !v.language) {
       ctx.addIssue({ code: "custom", path: ["language"], message: "language is required unless instrumental" });
+    }
+    if (v.style !== undefined && !isStyleSlug(v.style)) {
+      ctx.addIssue({ code: "custom", path: ["style"], message: "style must be a slug from the controlled vocabulary" });
+    }
+    if (v.direction !== undefined && !isDirectionSlug(v.direction)) {
+      ctx.addIssue({ code: "custom", path: ["direction"], message: "direction must be a slug from the controlled vocabulary" });
     }
     if (v.tosVersion !== CURRENT_TOS_VERSION) {
       ctx.addIssue({ code: "custom", path: ["tosVersion"], message: `tosVersion must be ${CURRENT_TOS_VERSION}` });
@@ -167,6 +186,23 @@ export async function submitTrack(
         byteLength: source.byteLength,
       },
     });
+
+    // H-402: confirmed taxonomy terms, written in the same transaction as
+    // the track. LANGUAGE derives from the BCP-47 primary subtag (pt-BR →
+    // pt, unlisted → other); instrumental tracks get no language term.
+    // Style/direction are optional author selections already validated
+    // against the vocabulary by the schema.
+    const termRefs: TermRef[] = [];
+    if (!input.instrumental && input.language) {
+      termRefs.push({ kind: "LANGUAGE", slug: languageTermSlug(input.language) });
+    }
+    if (input.direction !== undefined) {
+      termRefs.push({ kind: "DIRECTION", slug: input.direction });
+    }
+    if (input.style !== undefined) {
+      termRefs.push({ kind: "STYLE", slug: input.style });
+    }
+    await attachConfirmedTerms(tx, track.id, termRefs);
 
     return track.id;
   });

@@ -1,23 +1,26 @@
-// Seed skeleton (H-101): idempotent bootstrap of station-wide rows.
-// No users, no tracks — those arrive with later naryads.
-// The taxonomy below is a clearly marked PLACEHOLDER until H-402 replaces it.
+// Seed (H-402 replaces the H-101 placeholder): idempotent bootstrap of
+// station-wide rows. No users, no tracks — those arrive with later naryads.
+// The taxonomy is the controlled vocabulary from prisma/taxonomy/*.json
+// (Owner decision 2026-10-08): upsert by kind+slug, styles linked to their
+// parent direction. The retired placeholder rows are deleted so a DB seeded
+// before H-402 converges to the vocabulary; they never had TrackTerm links.
+// Run twice → identical counts.
+
 import { PrismaClient } from "@prisma/client";
 import { loadEnv } from "../src/server/env";
+import { LANGUAGES, DIRECTIONS, STYLES } from "../src/server/taxonomy/vocabulary";
 
-type TermSeed = { kind: "LANGUAGE" | "STYLE" | "DIRECTION"; slug: string; label: string };
-
-const PLACEHOLDER_SUFFIX = " (placeholder until H-402)";
-
-const PLACEHOLDER_TERMS: TermSeed[] = [
-  { kind: "LANGUAGE", slug: "lang-en", label: "English" },
-  { kind: "LANGUAGE", slug: "lang-ru", label: "Russian" },
-  { kind: "LANGUAGE", slug: "lang-instr", label: "Instrumental" },
-  { kind: "STYLE", slug: "style-synthwave", label: "Synthwave" },
-  { kind: "STYLE", slug: "style-ambient", label: "Ambient" },
-  { kind: "STYLE", slug: "style-rock", label: "Rock" },
-  { kind: "DIRECTION", slug: "dir-discovery", label: "Discovery" },
-  { kind: "DIRECTION", slug: "dir-classics", label: "Classics" },
-  { kind: "DIRECTION", slug: "dir-experimental", label: "Experimental" },
+/** Placeholder rows from the H-101 seed, retired by H-402. */
+const RETIRED_PLACEHOLDERS = [
+  { kind: "LANGUAGE" as const, slug: "lang-en" },
+  { kind: "LANGUAGE" as const, slug: "lang-ru" },
+  { kind: "LANGUAGE" as const, slug: "lang-instr" },
+  { kind: "STYLE" as const, slug: "style-synthwave" },
+  { kind: "STYLE" as const, slug: "style-ambient" },
+  { kind: "STYLE" as const, slug: "style-rock" },
+  { kind: "DIRECTION" as const, slug: "dir-discovery" },
+  { kind: "DIRECTION" as const, slug: "dir-classics" },
+  { kind: "DIRECTION" as const, slug: "dir-experimental" },
 ];
 
 export async function seed(db: PrismaClient): Promise<void> {
@@ -27,12 +30,34 @@ export async function seed(db: PrismaClient): Promise<void> {
     create: { id: "main" },
   });
 
-  for (const term of PLACEHOLDER_TERMS) {
+  for (const [slug, label] of Object.entries(LANGUAGES)) {
     await db.taxonomyTerm.upsert({
-      where: { kind_slug: { kind: term.kind, slug: term.slug } },
-      update: {},
-      create: { kind: term.kind, slug: term.slug, label: `${term.label}${PLACEHOLDER_SUFFIX}` },
+      where: { kind_slug: { kind: "LANGUAGE", slug } },
+      update: { label, parentId: null },
+      create: { kind: "LANGUAGE", slug, label },
     });
+  }
+  for (const [slug, label] of Object.entries(DIRECTIONS)) {
+    await db.taxonomyTerm.upsert({
+      where: { kind_slug: { kind: "DIRECTION", slug } },
+      update: { label, parentId: null },
+      create: { kind: "DIRECTION", slug, label },
+    });
+  }
+  for (const [slug, def] of Object.entries(STYLES)) {
+    const parent = await db.taxonomyTerm.findUniqueOrThrow({
+      where: { kind_slug: { kind: "DIRECTION", slug: def.parent } },
+      select: { id: true },
+    });
+    await db.taxonomyTerm.upsert({
+      where: { kind_slug: { kind: "STYLE", slug } },
+      update: { label: def.label, parentId: parent.id },
+      create: { kind: "STYLE", slug, label: def.label, parentId: parent.id },
+    });
+  }
+
+  for (const term of RETIRED_PLACEHOLDERS) {
+    await db.taxonomyTerm.deleteMany({ where: { kind: term.kind, slug: term.slug } });
   }
 }
 
