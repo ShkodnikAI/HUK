@@ -1,13 +1,21 @@
-// The ranking job (H-304): leader-gated (the maintenance runner gates it),
-// bounded (a batch of tracks per run), idempotent (recomputing the same
-// events yields the same row). Recomputes TrackScore for categoryKey 'all'
-// from likes, dislikes, playlist adds and verified listen events; writes
-// ONLY APPROVED, available tracks. A nightly full pass recomputes all.
+// The ranking job (H-304, extended by H-305): leader-gated (the
+// maintenance runner gates it), bounded (a batch of tracks per run),
+// idempotent (recomputing the same events yields the same row). Recomputes
+// TrackScore from likes, dislikes, playlist adds and verified listen
+// events; writes ONLY APPROVED, available tracks. H-305: the score is
+// written for every chart category the track belongs to (all, lang:<code>,
+// style:<slug>, direction:<slug>, instrumental, lang+style combos) and
+// rows for categories the track left are deleted; a daily reconcile job
+// recomputes tracks whose category set no longer matches their confirmed
+// terms (moderator SET_TERMS). The weekly chart snapshot rides the same
+// gated runner (src/server/charts/service.ts).
 
 import { PrismaClient } from "@prisma/client";
 import { db as defaultDb } from "@/server/db";
 import { scoreTrack, type RankedEvent } from "./signals";
 import { runAntifraudPass, updateReputations } from "./antifraud";
+import { categoryKeysForTrack } from "@/server/charts/categories";
+import { ensureWeeklySnapshots } from "@/server/charts/service";
 import type { MaintenanceJob } from "@/server/maintenance/types";
 
 const BATCH_TRACKS = 200;
@@ -27,12 +35,34 @@ export async function recomputeTrackScores(
 
   const tracks = await client.track.findMany({
     where: { id: { in: trackIds }, status: "APPROVED", available: true },
-    select: { id: true },
+    select: { id: true, language: true, instrumental: true },
   });
-  const eligibleIds = new Set(tracks.map((t) => t.id));
+  const eligible = new Map(tracks.map((t) => [t.id, t]));
+  const trackIdsEligible = [...eligible.keys()];
+
+  // H-305: the confirmed terms drive the chart categories (lang/style/
+  // direction); loaded once for the whole batch.
+  const termRows = trackIdsEligible.length
+    ? await client.trackTerm.findMany({
+        where: { trackId: { in: trackIdsEligible }, confirmed: true },
+        select: { trackId: true, term: { select: { kind: true, slug: true } } },
+      })
+    : [];
+  const termsByTrack = new Map<string, Array<{ kind: "LANGUAGE" | "STYLE" | "DIRECTION"; slug: string }>>();
+  for (const row of termRows) {
+    const list = termsByTrack.get(row.trackId) ?? [];
+    list.push({ kind: row.term.kind, slug: row.term.slug });
+    termsByTrack.set(row.trackId, list);
+  }
 
   let written = 0;
-  for (const trackId of eligibleIds) {
+  for (const trackId of trackIdsEligible) {
+    const shape = eligible.get(trackId)!;
+    const categoryKeys = categoryKeysForTrack({
+      language: shape.language,
+      instrumental: shape.instrumental,
+      terms: termsByTrack.get(trackId) ?? [],
+    });
     const [reactions, playlistAdds, listens, flags] = await Promise.all([
       client.reaction.findMany({
         where: { trackId },
@@ -104,10 +134,16 @@ export async function recomputeTrackScores(
       }
     }
     const result = scoreTrack(events);
-    await client.trackScore.upsert({
-      where: { trackId_categoryKey: { trackId, categoryKey: "all" } },
-      create: { trackId, categoryKey: "all", score: result.score, nEff: result.nEff, voters: result.voters },
-      update: { score: result.score, nEff: result.nEff, voters: result.voters },
+    for (const categoryKey of categoryKeys) {
+      await client.trackScore.upsert({
+        where: { trackId_categoryKey: { trackId, categoryKey } },
+        create: { trackId, categoryKey, score: result.score, nEff: result.nEff, voters: result.voters },
+        update: { score: result.score, nEff: result.nEff, voters: result.voters },
+      });
+    }
+    // Rows for categories the track left (terms changed) go away.
+    await client.trackScore.deleteMany({
+      where: { trackId, categoryKey: { notIn: categoryKeys } },
     });
     written++;
   }
@@ -143,6 +179,59 @@ async function staleTrackIds(client: PrismaClient, limit: number): Promise<strin
 
 export function makeRankingJobs(seam: { client?: PrismaClient } = {}): MaintenanceJob[] {
   const client = seam.client ?? defaultDb;
+
+  /**
+   * H-305: tracks whose score-row category set no longer matches their
+   * confirmed terms (a moderator SET_TERMS adds or removes categories).
+   * App-side comparison — the language key uses the same derivation as the
+   * submission path, so the check is exact.
+   */
+  async function categoryMismatchedTrackIds(): Promise<string[]> {
+    const tracks = await client.track.findMany({
+      where: { status: "APPROVED", available: true },
+      select: { id: true, language: true, instrumental: true },
+    });
+    if (tracks.length === 0) return [];
+    const terms = await client.trackTerm.findMany({
+      where: { trackId: { in: tracks.map((t) => t.id) }, confirmed: true },
+      select: { trackId: true, term: { select: { kind: true, slug: true } } },
+    });
+    const termsByTrack = new Map<string, Array<{ kind: "LANGUAGE" | "STYLE" | "DIRECTION"; slug: string }>>();
+    for (const row of terms) {
+      const list = termsByTrack.get(row.trackId) ?? [];
+      list.push({ kind: row.term.kind, slug: row.term.slug });
+      termsByTrack.set(row.trackId, list);
+    }
+    const expected = new Map(
+      tracks.map((t) => [
+        t.id,
+        categoryKeysForTrack({
+          language: t.language,
+          instrumental: t.instrumental,
+          terms: termsByTrack.get(t.id) ?? [],
+        }),
+      ]),
+    );
+    const actualRows = await client.trackScore.findMany({
+      where: { trackId: { in: tracks.map((t) => t.id) } },
+      select: { trackId: true, categoryKey: true },
+    });
+    const actual = new Map<string, Set<string>>();
+    for (const row of actualRows) {
+      const set = actual.get(row.trackId) ?? new Set<string>();
+      set.add(row.categoryKey);
+      actual.set(row.trackId, set);
+    }
+    const mismatched: string[] = [];
+    for (const [trackId, keys] of expected) {
+      const have = actual.get(trackId) ?? new Set<string>();
+      if (keys.length !== have.size || keys.some((k) => !have.has(k))) {
+        mismatched.push(trackId);
+      }
+    }
+    return mismatched;
+  }
+
   return [
     {
       name: "ranking-recompute",
@@ -175,6 +264,25 @@ export function makeRankingJobs(seam: { client?: PrismaClient } = {}): Maintenan
         }
         return `${written} tracks rescored (full pass)`;
       },
+    },
+    {
+      // H-305: reconcile the chart categories after moderator term changes.
+      name: "chart-category-reconcile",
+      everyMs: 24 * 60 * 60 * 1000,
+      run: async () => {
+        const mismatched = await categoryMismatchedTrackIds();
+        if (mismatched.length === 0) return "0 category mismatches";
+        const written = await recomputeTrackScores(mismatched, Date.now(), { client });
+        return `${written} tracks rescored (${mismatched.length} category mismatches)`;
+      },
+    },
+    {
+      // H-305: the weekly snapshot — a cheap existence check per tick; the
+      // Monday 00:00 UTC snapshot is written by the first run of the week
+      // (catch-up after downtime) and never rewritten afterwards.
+      name: "charts-weekly-snapshot",
+      everyMs: 10 * 60 * 1000,
+      run: async () => ensureWeeklySnapshots(new Date(), { client }),
     },
   ];
 }
