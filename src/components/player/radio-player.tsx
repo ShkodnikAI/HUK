@@ -22,6 +22,7 @@ import {
 } from "@/lib/sync/playback";
 import { applyRestrictions, type RadioNowResponse } from "@/lib/radio/contract";
 import { sendFinalBeat, startListenSession } from "@/lib/listen/client";
+import { CommentsThread } from "@/components/comments/comments-thread";
 
 // The persistent radio player (H-105): one <audio> element mounted in the
 // root locale layout so it survives navigation. Polls /api/radio/now
@@ -40,6 +41,7 @@ interface NowState {
 
 export function RadioPlayer() {
   const t = useTranslations("player");
+  const commentsT = useTranslations("comments");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const skewRef = useRef(0);
   const currentRef = useRef<ServerSlot | null>(null);
@@ -584,6 +586,15 @@ export function RadioPlayer() {
               </li>
             ))}
           </ul>
+        </details>
+      )}
+      {slotTrackId && playing && (
+        // H-303: comments for the track on air — a block under the player
+        // (the card's "player drawer" option; the track page ships with the
+        // UI wave). Text only, never HTML (S5).
+        <details className="mt-2 text-sm">
+          <summary className="cursor-pointer text-neutral-400">{commentsT("title")}</summary>
+          <CommentsThread trackId={slotTrackId} />
         </details>
       )}
       <audio ref={audioRef} preload="none" />

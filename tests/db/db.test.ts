@@ -450,6 +450,256 @@ describe.skipIf(!databaseUrl)("taxonomy (H-402)", () => {
   });
 });
 
+describe.skipIf(!databaseUrl)("comments (H-303)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  const daysAgo = (days: number): Date => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  async function listener(daysOld = 3) {
+    const user = await db.user.create({
+      data: { email: `listener-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.example`, role: "LISTENER", createdAt: daysAgo(daysOld) },
+    });
+    const session = await db.session.create({
+      data: { userId: user.id, sessionToken: `tok-${user.id}`, expires: new Date(Date.now() + 86_400_000) },
+    });
+    return { user, token: session.sessionToken };
+  }
+
+  async function artistWithTrack() {
+    const { user, token } = await listener();
+    await db.user.update({ where: { id: user.id }, data: { role: "ARTIST" } });
+    const profile = await db.artistProfile.create({ data: { userId: user.id, handle: `artist-${Math.floor(Math.random() * 1e9)}`, displayName: "Thread Artist" } });
+    const track = await db.track.create({ data: { artistId: profile.id, title: "live track", status: "APPROVED", available: true } });
+    return { user, token, profile, track };
+  }
+
+  async function verifiedListen(userId: string, trackId: string, verifiedMs = 30_000) {
+    await db.listenSession.create({
+      data: { userId, trackId, mode: "RADIO", anonHash: `anon-${Math.floor(Math.random() * 1e9)}`, verifiedMs, startedAt: new Date(Date.now() - 3_600_000) },
+    });
+  }
+
+  function postComment(trackId: string, token: string, body: unknown, parentId?: string) {
+    return import("@/app/api/tracks/[id]/comments/route").then(({ POST }) =>
+      POST(
+        new Request("http://localhost:3000/api/tracks/x/comments", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "http://localhost:3000", cookie: `${SESSION_COOKIE}=${token}` },
+          body: JSON.stringify({ body, ...(parentId ? { parentId } : {}) }),
+        }),
+        { params: Promise.resolve({ id: trackId }) },
+      ),
+    );
+  }
+
+  function getComments(trackId: string, token?: string) {
+    return import("@/app/api/tracks/[id]/comments/route").then(({ GET }) =>
+      GET(
+        new Request("http://localhost:3000/api/tracks/x/comments", {
+          headers: token ? { cookie: `${SESSION_COOKIE}=${token}` } : {},
+        }),
+        { params: Promise.resolve({ id: trackId }) },
+      ),
+    );
+  }
+
+  it("gates: 30 s verified listening on the track and a 24 h account; only live tracks", async () => {
+    const fresh = await listener(0);
+    const track = (await artistWithTrack()).track;
+    const { POST } = await import("@/app/api/tracks/[id]/comments/route");
+
+    // Account younger than 24 h → 403 even with a verified session.
+    await verifiedListen(fresh.user.id, track.id);
+    expect((await postComment(track.id, fresh.token, "hello")).status).toBe(403);
+
+    const old = await listener(3);
+    // No verified listening → 403.
+    expect((await postComment(track.id, old.token, "hello")).status).toBe(403);
+    // 29 s verified → still 403 (H-301 number: 30 s).
+    await verifiedListen(old.user.id, track.id, 29_000);
+    expect((await postComment(track.id, old.token, "hello")).status).toBe(403);
+    // 30 s verified → the comment is created HELD.
+    await verifiedListen(old.user.id, track.id, 30_000);
+    const created = await postComment(track.id, old.token, "hello");
+    expect(created.status).toBe(201);
+    expect(((await created.json()) as { comment: { status: string } }).comment.status).toBe("HELD");
+
+    // A PENDING track has no public thread (S2, fail closed).
+    const pendingTrack = await db.track.create({ data: { title: "pending", status: "PENDING" } });
+    expect((await postComment(pendingTrack.id, old.token, "hi")).status).toBe(403);
+  });
+
+  it("a new comment is never visible to the public before approval; the author sees their HELD row", async () => {
+    const { user, token, track } = await artistWithTrack();
+    await verifiedListen(user.id, track.id);
+    const created = await postComment(track.id, token, "hidden until approved");
+    const commentId = ((await created.json()) as { comment: { id: string } }).comment.id;
+
+    const anon = await (await getComments(track.id)).json() as { comments: Array<{ id: string; waitingForReview?: boolean }> };
+    expect(anon.comments).toHaveLength(0); // the public never sees a HELD comment
+
+    const author = await (await getComments(track.id, token)).json() as { comments: Array<{ id: string; waitingForReview?: boolean }> };
+    expect(author.comments.map((c) => c.id)).toEqual([commentId]);
+    expect(author.comments[0].waitingForReview).toBe(true);
+
+    // Moderator approves → public.
+    const moderator = (await listener()).user;
+    await db.user.update({ where: { id: moderator.id }, data: { role: "MODERATOR" } });
+    const { moderatorCommentAction } = await import("@/server/comments/service");
+    expect((await moderatorCommentAction(commentId, { action: "APPROVE" }, moderator, { client: db })).status).toBe("VISIBLE");
+    const pub = await (await getComments(track.id)).json() as { comments: Array<{ id: string; body: string }> };
+    expect(pub.comments.map((c) => c.body)).toEqual(["hidden until approved"]);
+  });
+
+  it("one level of replies: parentId must be a visible top-level comment of the same track", async () => {
+    const a = await artistWithTrack();
+    await verifiedListen(a.user.id, a.track.id);
+    const other = (await artistWithTrack()).track;
+    // Each negative attempt gets its own verified listener: the 5-per-10-min
+    // rate limit is consumed by rejected attempts too (it fires before the
+    // gates), so the budget must be kept per attempt.
+    const replyer = async (trackId: string) => {
+      const u = await listener();
+      await verifiedListen(u.user.id, trackId);
+      return u;
+    };
+
+    const parent = await postComment(a.track.id, a.token, "top level");
+    const parentId = ((await parent.json()) as { comment: { id: string } }).comment.id;
+    const moderator = (await listener()).user;
+    await db.user.update({ where: { id: moderator.id }, data: { role: "MODERATOR" } });
+    const { moderatorCommentAction } = await import("@/server/comments/service");
+    await moderatorCommentAction(parentId, { action: "APPROVE" }, moderator, { client: db });
+
+    // A reply to a VISIBLE top-level comment works.
+    const reply = await postComment(a.track.id, a.token, "a reply", parentId);
+    expect(reply.status).toBe(201);
+    const replyId = ((await reply.json()) as { comment: { id: string } }).comment.id;
+
+    // Reply to a reply → rejected.
+    expect((await postComment(a.track.id, (await replyer(a.track.id)).token, "too deep", replyId)).status).toBe(422);
+    // Reply to a HELD comment → rejected.
+    const held = await postComment(a.track.id, (await replyer(a.track.id)).token, "not approved yet");
+    const heldId = ((await held.json()) as { comment: { id: string } }).comment.id;
+    expect((await postComment(a.track.id, (await replyer(a.track.id)).token, "no", heldId)).status).toBe(422);
+    // Parent from another track → rejected.
+    expect((await postComment(other.id, (await replyer(other.id)).token, "cross-track", parentId)).status).toBe(422);
+  });
+
+  it("controls: artist hide, own delete (body cleared), moderator remove with reason — each audited", async () => {
+    const a = await artistWithTrack();
+    await verifiedListen(a.user.id, a.track.id);
+    const commenter = await listener();
+    await verifiedListen(commenter.user.id, a.track.id);
+    const moderator = await listener();
+    await db.user.update({ where: { id: moderator.user.id }, data: { role: "MODERATOR" } });
+
+    const c1 = await postComment(a.track.id, commenter.token, "artist will hide this");
+    const c1id = ((await c1.json()) as { comment: { id: string } }).comment.id;
+    const c2 = await postComment(a.track.id, commenter.token, "author deletes this");
+    const c2id = ((await c2.json()) as { comment: { id: string } }).comment.id;
+    const c3 = await postComment(a.track.id, commenter.token, "moderator removes this");
+    const c3id = ((await c3.json()) as { comment: { id: string } }).comment.id;
+    const { moderatorCommentAction, hideCommentAsArtist, deleteOwnComment } = await import("@/server/comments/service");
+    for (const id of [c1id, c2id, c3id]) {
+      await moderatorCommentAction(id, { action: "APPROVE" }, moderator.user, { client: db });
+    }
+
+    // Artist hide: only the track's artist.
+    const outsider = await listener();
+    await expect(hideCommentAsArtist(c1id, outsider.user.id, { client: db })).rejects.toMatchObject({ status: 403 });
+    await hideCommentAsArtist(c1id, a.user.id, { client: db });
+    expect((await db.comment.findUniqueOrThrow({ where: { id: c1id } })).status).toBe("HIDDEN");
+    expect(await db.auditLog.count({ where: { action: "comment.hidden-by-artist", targetId: c1id } })).toBe(1);
+
+    // Own delete: REMOVED with the placeholder body (DB check keeps length >= 1).
+    await deleteOwnComment(c2id, commenter.user, { client: db });
+    const deleted = await db.comment.findUniqueOrThrow({ where: { id: c2id } });
+    expect(deleted.status).toBe("REMOVED");
+    expect(deleted.body).toBe("[removed]");
+    expect(await db.auditLog.count({ where: { action: "comment.deleted-by-author", targetId: c2id } })).toBe(1);
+
+    // Moderator remove carries a mandatory statement of reasons.
+    await expect(moderatorCommentAction(c3id, { action: "REMOVE" }, moderator.user, { client: db })).rejects.toBeInstanceOf(Object);
+    const removed = await moderatorCommentAction(c3id, { action: "REMOVE", reason: "abuse of the thread" }, moderator.user, { client: db });
+    expect(removed.status).toBe("REMOVED");
+    const auditRow = await db.auditLog.findFirstOrThrow({
+      where: { action: "comment.moderator-action", targetId: c3id, payload: { path: ["decision"], equals: "REMOVE" } },
+      orderBy: { createdAt: "desc" },
+    });
+    expect((auditRow.payload as { reason?: string }).reason).toBe("abuse of the thread");
+
+    // The commenter sees the statement of reasons on their own moderated row.
+    const own = await (await getComments(a.track.id, commenter.token)).json() as {
+      comments: Array<{ id: string; statementOfReasons?: string | null }>;
+    };
+    const removedView = own.comments.find((c) => c.id === c3id);
+    expect(removedView?.statementOfReasons).toBe("abuse of the thread");
+
+    // A removed comment cannot change status again.
+    await expect(moderatorCommentAction(c3id, { action: "APPROVE" }, moderator.user, { client: db })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("edit within 10 minutes re-holds the comment; outside the window and by others it is refused", async () => {
+    const a = await artistWithTrack();
+    await verifiedListen(a.user.id, a.track.id);
+    const moderator = await listener();
+    await db.user.update({ where: { id: moderator.user.id }, data: { role: "MODERATOR" } });
+    const { createComment, editOwnComment, moderatorCommentAction } = await import("@/server/comments/service");
+
+    const { commentId } = await createComment(a.track.id, { body: "first draft" }, a.user, { client: db });
+    expect((await editOwnComment(commentId, { body: "second draft" }, a.user, { client: db })).status).toBe("HELD");
+    await moderatorCommentAction(commentId, { action: "APPROVE" }, moderator.user, { client: db });
+    // An edit of a VISIBLE comment returns it to HELD (option (a): the new text waits too).
+    expect((await editOwnComment(commentId, { body: "third draft" }, a.user, { client: db })).status).toBe("HELD");
+    expect((await db.comment.findUniqueOrThrow({ where: { id: commentId } })).body).toBe("third draft");
+
+    // Other users cannot edit or delete.
+    const other = await listener();
+    await expect(editOwnComment(commentId, { body: "hijack" }, other.user, { client: db })).rejects.toMatchObject({ status: 403 });
+
+    // Outside the 10-minute window: 403, nothing changes.
+    const later = { client: db as never, now: () => new Date(Date.now() + 11 * 60 * 1000) };
+    await expect(editOwnComment(commentId, { body: "late" }, a.user, later as never)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("rate limit: the 6th comment within 10 minutes is 429", async () => {
+    const a = await artistWithTrack();
+    await verifiedListen(a.user.id, a.track.id, 600_000);
+    for (let i = 0; i < 5; i++) {
+      expect((await postComment(a.track.id, a.token, `comment ${i}`)).status).toBe(201);
+    }
+    expect((await postComment(a.track.id, a.token, "one too many")).status).toBe(429);
+  });
+
+  it("a COMMENT report flows through the H-206 queue and is dismissible", async () => {
+    const a = await artistWithTrack();
+    await verifiedListen(a.user.id, a.track.id);
+    const { createComment } = await import("@/server/comments/service");
+    const { createReport, listOpenReports, resolveReport } = await import("@/server/reports/service");
+    const { commentId } = await createComment(a.track.id, { body: "reportable text" }, a.user, { client: db });
+
+    const reporter = await listener();
+    await createReport({ targetType: "COMMENT", targetId: commentId, reason: "looks like spam" }, reporter.user.id, { client: db });
+    const open = await listOpenReports({ client: db } as never);
+    expect(open.some((r) => r.targetType === "COMMENT" && r.targetId === commentId)).toBe(true);
+
+    const moderator = await listener();
+    await db.user.update({ where: { id: moderator.user.id }, data: { role: "MODERATOR" } });
+    const reportId = open.find((r) => r.targetType === "COMMENT")!.id;
+    await resolveReport({ reportId, action: "DISMISS", statementOfReasons: "no violation found" }, moderator.user, { client: db });
+  });
+});
+
 describe.skipIf(!databaseUrl)("rate limiter (H-103)", () => {
   const db = makeClient();
 
