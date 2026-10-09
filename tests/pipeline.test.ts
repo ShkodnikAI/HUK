@@ -181,8 +181,31 @@ describe("production env requirements (H-103)", () => {
       IP_HASH_SALT: "test-only fixture value, not a credential",
       CLIENT_IP_HEADER: "cf-connecting-ip",
       EMAIL_SERVER: "smtp://user:pass@localhost:1025",
+      AUDIO_CACHE_DIR: "/var/lib/huk/audio-cache",
     });
     expect(env.IP_HASH_SALT).toBe("test-only fixture value, not a credential");
+  });
+
+  it("refuses to start in production without AUDIO_CACHE_DIR (H-112, D14)", () => {
+    expect(() =>
+      loadEnv({
+        ...base,
+        NODE_ENV: "production",
+        NEXTAUTH_URL: "https://radio.example",
+        IP_HASH_SALT: "test-only fixture value, not a credential",
+        CLIENT_IP_HEADER: "cf-connecting-ip",
+        EMAIL_SERVER: "smtp://user:pass@localhost:1025",
+      }),
+    ).toThrow(/AUDIO_CACHE_DIR/);
+  });
+
+  it("refuses an AUDIO_CACHE_DIR under a served public path (H-112, S3)", () => {
+    for (const bad of ["public/cache", "/srv/app/public/cache", "/srv/Public/cache", "/srv/app/../public/cache", "relative/cache", "/srv/app/../cache"] ) {
+      expect(() =>
+        loadEnv({ ...base, AUDIO_CACHE_DIR: bad }),
+      ).toThrow(/AUDIO_CACHE_DIR/);
+    }
+    expect(() => loadEnv({ ...base, AUDIO_CACHE_DIR: "/var/lib/huk/audio-cache" })).not.toThrow();
   });
 
   it("refuses to start in production without EMAIL_SERVER (H-102)", () => {
