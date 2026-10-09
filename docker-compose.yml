@@ -43,6 +43,11 @@ services:
       CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
       # Magic links are sent to the local mailpit sink (read: :8025).
       EMAIL_SERVER: ${EMAIL_SERVER:-smtp://mailpit:1025}
+      # H-112 (D14): the web container serves the broadcast cache read-only.
+      AUDIO_CACHE_DIR: ${AUDIO_CACHE_DIR:-/var/lib/huk/audio-cache}
+      AUDIO_CACHE_MAX_BYTES: ${AUDIO_CACHE_MAX_BYTES:-419430400}
+    volumes:
+      - audio_cache:/var/lib/huk/audio-cache:ro
     ports:
       - "3000:3000"
     depends_on:
@@ -63,6 +68,11 @@ services:
       IP_HASH_SALT: ${IP_HASH_SALT:-huk-dev-ip-hash-salt-do-not-use-in-prod}
       CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
       EMAIL_SERVER: ${EMAIL_SERVER:-smtp://mailpit:1025}
+      # H-112 (D14): the worker is the only writer of the broadcast cache.
+      AUDIO_CACHE_DIR: ${AUDIO_CACHE_DIR:-/var/lib/huk/audio-cache}
+      AUDIO_CACHE_MAX_BYTES: ${AUDIO_CACHE_MAX_BYTES:-419430400}
+    volumes:
+      - audio_cache:/var/lib/huk/audio-cache
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,3 +85,4 @@ services:
 
 volumes:
   pgdata: {}
+  audio_cache: {}
