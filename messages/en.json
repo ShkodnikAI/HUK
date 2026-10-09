@@ -81,7 +81,16 @@
     "auditLine": "{action} · {at}",
     "targetLabel": "{targetType}: {targetId}",
     "reportMeta": "{category} · urgency {urgency}",
-    "reportContact": "contact: {contact}"
+    "reportContact": "contact: {contact}",
+    "commentsQueue": "Comments queue",
+    "commentsHeldNote": "Held comments wait for a decision; hidden comments are listed for re-approval. Hide and remove require a statement of reasons — it is shown to the commenter.",
+    "commentParentExcerpt": "Reply to: {excerpt}",
+    "commentStatus": "Status: {status}",
+    "statusHeld": "held",
+    "statusHidden": "hidden",
+    "comment_approve": "Approve",
+    "comment_hide": "Hide",
+    "comment_remove": "Remove"
   },
   "taxonomy": {
     "language": {
@@ -184,5 +193,32 @@
       "cinematic": "Cinematic",
       "game-music": "Game Music"
     }
+  },
+  "comments": {
+    "title": "Comments",
+    "heldNotice": "Every comment is reviewed by a moderator before it appears — nothing is published automatically.",
+    "placeholder": "Write a comment (no links, 1-500 characters)",
+    "submit": "Send",
+    "reply": "Reply",
+    "replyingTo": "Replying to a comment —",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "save": "Save",
+    "delete": "Delete",
+    "report": "Report",
+    "reportReason": "Reported from the comment thread",
+    "reported": "Thank you — the report is in the moderation queue.",
+    "empty": "No comments yet.",
+    "loadFailed": "Comments could not be loaded.",
+    "actionFailed": "The action failed. Try again later.",
+    "waitingForReview": "Waiting for review",
+    "moderatedWithReason": "Moderator: {reason}",
+    "signInToComment": "Sign in to comment.",
+    "errorRateLimited": "Too many comments — try again in a few minutes.",
+    "errorAccountTooNew": "Accounts younger than 24 hours cannot comment yet.",
+    "errorNotVerified": "Listen for 30 seconds to this track first — then you can comment.",
+    "errorLink": "Comments cannot contain links.",
+    "errorTooLong": "The comment must be 1-500 characters.",
+    "errorEditWindow": "Comments can be edited for 10 minutes after posting."
   }
 }
