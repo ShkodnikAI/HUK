@@ -278,22 +278,175 @@ describe.skipIf(!databaseUrl)("seed (H-101)", () => {
 
     expect(afterSecond).toEqual(afterFirst);
     expect(afterSecond.stationStates).toBe(1);
-    expect(afterSecond.terms).toBe(9); // 3 per kind: LANGUAGE, STYLE, DIRECTION
+    expect(afterSecond.terms).toBe(94); // 42 LANGUAGE + 10 DIRECTION + 42 STYLE (H-402)
   });
 
-  it("marks the taxonomy as a placeholder until H-402", async () => {
+  it("seeds the controlled vocabulary from the data files (H-402)", async () => {
     await seed(db);
-    const terms = await db.taxonomyTerm.findMany();
-    expect(terms.length).toBeGreaterThan(0);
-    for (const term of terms) {
-      expect(term.label).toContain("placeholder until H-402");
+    const languages = await db.taxonomyTerm.findMany({ where: { kind: "LANGUAGE" } });
+    const directions = await db.taxonomyTerm.findMany({ where: { kind: "DIRECTION" } });
+    const styles = await db.taxonomyTerm.findMany({ where: { kind: "STYLE" } });
+    expect(languages).toHaveLength(42);
+    expect(directions).toHaveLength(10);
+    expect(styles).toHaveLength(42);
+    // Labels come from the data files; no placeholder marker survives.
+    for (const term of [...languages, ...directions, ...styles]) {
+      expect(term.label).not.toContain("placeholder");
+      expect(term.label.length).toBeGreaterThan(0);
     }
+    // Every style hangs off a real DIRECTION row (parentId set).
+    const directionIds = new Set(directions.map((d) => d.id));
+    for (const style of styles) {
+      expect(style.parentId, style.slug).not.toBeNull();
+      expect(directionIds.has(style.parentId!), style.slug).toBe(true);
+    }
+    // Spot checks against the Owner decision (2026-10-08).
+    const bySlug = (kind: string, slug: string) =>
+      db.taxonomyTerm.findUniqueOrThrow({ where: { kind_slug: { kind: kind as never, slug } } });
+    await expect(bySlug("LANGUAGE", "be")).resolves.toBeTruthy();
+    await expect(bySlug("LANGUAGE", "other")).resolves.toBeTruthy();
+    await expect(bySlug("DIRECTION", "ambient-experimental")).resolves.toBeTruthy();
+    const synthwave = await bySlug("STYLE", "synthwave");
+    const electronic = await bySlug("DIRECTION", "electronic");
+    expect(synthwave.parentId).toBe(electronic.id);
   });
 
   it("creates no users and no tracks", async () => {
     await seed(db);
     await expect(db.user.count()).resolves.toBe(0);
     await expect(db.track.count()).resolves.toBe(0);
+  });
+});
+
+describe.skipIf(!databaseUrl)("taxonomy (H-402)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+    await seed(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  it("GET /api/taxonomy counts only APPROVED, available tracks per term", async () => {
+    const terms = await db.taxonomyTerm.findMany();
+    const idOf = (kind: string, slug: string) => {
+      const t = terms.find((x) => x.kind === kind && x.slug === slug);
+      expect(t, `${kind}:${slug}`).toBeTruthy();
+      return t!.id;
+    };
+    const link = (trackId: string, kind: string, slug: string) =>
+      db.trackTerm.create({ data: { trackId, termId: idOf(kind, slug), confirmed: true } });
+
+    const counted = await db.track.create({ data: { title: "counted", status: "APPROVED", available: true, language: "en" } });
+    await link(counted.id, "LANGUAGE", "en");
+    await link(counted.id, "STYLE", "lo-fi");
+    await link(counted.id, "DIRECTION", "electronic");
+
+    const unavailable = await db.track.create({ data: { title: "unavailable", status: "APPROVED", available: false } });
+    await link(unavailable.id, "LANGUAGE", "en");
+    const pending = await db.track.create({ data: { title: "pending", status: "PENDING" } });
+    await link(pending.id, "LANGUAGE", "en");
+    const takenDown = await db.track.create({ data: { title: "gone", status: "TAKEN_DOWN" } });
+    await link(takenDown.id, "LANGUAGE", "en");
+
+    const { GET } = await import("@/app/api/taxonomy/route");
+    const res = await GET(new Request("http://localhost:3000/api/taxonomy"), { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toContain("s-maxage=300");
+    const body = (await res.json()) as {
+      language: { slug: string; label: string; tracks: number }[];
+      direction: { slug: string; label: string; tracks: number }[];
+      style: { slug: string; label: string; parent: string; tracks: number }[];
+    };
+    expect(body.language).toHaveLength(42);
+    expect(body.direction).toHaveLength(10);
+    expect(body.style).toHaveLength(42);
+    const countOf = (list: { slug: string; tracks: number }[], slug: string) => list.find((x) => x.slug === slug)?.tracks ?? 0;
+    // Only the APPROVED, available track is counted — PENDING, TAKEN_DOWN
+    // and unavailable tracks never inflate the public numbers (S2).
+    expect(countOf(body.language, "en")).toBe(1);
+    expect(countOf(body.style, "lo-fi")).toBe(1);
+    expect(countOf(body.direction, "electronic")).toBe(1);
+    expect(countOf(body.language, "ru")).toBe(0);
+    expect(countOf(body.style, "synthwave")).toBe(0);
+    const lofi = body.style.find((s) => s.slug === "lo-fi");
+    expect(lofi).toMatchObject({ label: "Lo-fi", parent: "electronic" });
+  });
+
+  it("GET /api/taxonomy ignores unconfirmed rows (reserved for AI suggestions)", async () => {
+    const langEn = await db.taxonomyTerm.findUniqueOrThrow({ where: { kind_slug: { kind: "LANGUAGE", slug: "en" } } });
+    const track = await db.track.create({ data: { title: "approved", status: "APPROVED", available: true } });
+    await db.trackTerm.create({ data: { trackId: track.id, termId: langEn.id, confirmed: false } });
+    const { GET } = await import("@/app/api/taxonomy/route");
+    const res = await GET(new Request("http://localhost:3000/api/taxonomy"), { params: Promise.resolve({}) });
+    const body = (await res.json()) as { language: { slug: string; tracks: number }[] };
+    expect(body.language.find((x) => x.slug === "en")?.tracks ?? 0).toBe(0);
+  });
+
+  it("moderator SET_TERMS replaces confirmed terms on any status and writes the audit row", async () => {
+    const moderator = await db.user.create({ data: { email: `mod-${Date.now()}@test.example`, role: "MODERATOR" } });
+    const track = await db.track.create({ data: { title: "approved track", status: "APPROVED", available: true, language: "en" } });
+    const langEn = await db.taxonomyTerm.findUniqueOrThrow({ where: { kind_slug: { kind: "LANGUAGE", slug: "en" } } });
+    await db.trackTerm.create({ data: { trackId: track.id, termId: langEn.id, confirmed: true } });
+
+    const { moderatorTrackAction } = await import("@/server/tracks/moderator-actions");
+    const result = await moderatorTrackAction(
+      { trackId: track.id, action: "SET_TERMS", terms: { language: "pt-BR", direction: "rock", style: "punk" } },
+      moderator,
+      { client: db },
+    );
+    expect(result.status).toBe("APPROVED"); // status untouched
+
+    const updated = await db.track.findUniqueOrThrow({ where: { id: track.id } });
+    expect(updated.language).toBe("pt-BR");
+    const terms = await db.trackTerm.findMany({
+      where: { trackId: track.id },
+      include: { term: true },
+    });
+    const kinds = terms.map((t) => ({ kind: t.term.kind, slug: t.term.slug, confirmed: t.confirmed }));
+    expect(kinds).toContainEqual({ kind: "LANGUAGE", slug: "pt", confirmed: true }); // pt-BR → pt
+    expect(kinds).toContainEqual({ kind: "DIRECTION", slug: "rock", confirmed: true });
+    expect(kinds).toContainEqual({ kind: "STYLE", slug: "punk", confirmed: true });
+    expect(terms.filter((t) => t.term.slug === "en")).toHaveLength(0); // replaced, not duplicated
+    const punk = terms.find((t) => t.term.slug === "punk");
+    expect(punk!.term.parentId).toBe((await db.taxonomyTerm.findUniqueOrThrow({ where: { kind_slug: { kind: "DIRECTION", slug: "rock" } } })).id);
+
+    // A second call that touches only style leaves the other kinds alone.
+    await moderatorTrackAction({ trackId: track.id, action: "SET_TERMS", terms: { style: "indie-rock" } }, moderator, { client: db });
+    const after = await db.trackTerm.findMany({ where: { trackId: track.id }, include: { term: true } });
+    expect(after.map((t) => t.term.slug).sort()).toEqual(["indie-rock", "pt", "rock"]);
+
+    const audits = await db.auditLog.findMany({ where: { action: "track.terms-updated" } });
+    expect(audits).toHaveLength(2);
+    expect(audits[0].actorId).toBe(moderator.id);
+    expect(audits[0].targetId).toBe(track.id);
+  });
+
+  it("moderator SET_TERMS: unknown slugs and empty payloads are rejected; instrumental keeps no language term", async () => {
+    const { moderatorActionSchema } = await import("@/server/tracks/moderator-actions");
+    expect(moderatorActionSchema.safeParse({ trackId: "t", action: "SET_TERMS", terms: { style: "not-a-style" } }).success).toBe(false);
+    expect(moderatorActionSchema.safeParse({ trackId: "t", action: "SET_TERMS", terms: { direction: "discovery" } }).success).toBe(false);
+    expect(moderatorActionSchema.safeParse({ trackId: "t", action: "SET_TERMS", terms: {} }).success).toBe(false);
+    expect(moderatorActionSchema.safeParse({ trackId: "t", action: "SET_TERMS" }).success).toBe(false);
+    expect(moderatorActionSchema.safeParse({ trackId: "t", action: "SET_TERMS", terms: { style: "punk" } }).success).toBe(true);
+
+    const moderator = await db.user.create({ data: { email: `mod2-${Date.now()}@test.example`, role: "MODERATOR" } });
+    const track = await db.track.create({ data: { title: "instrumental", status: "PENDING", instrumental: true, language: null } });
+    const { moderatorTrackAction } = await import("@/server/tracks/moderator-actions");
+    const result = await moderatorTrackAction(
+      { trackId: track.id, action: "SET_TERMS", terms: { language: "de", direction: "classical" } },
+      moderator,
+      { client: db },
+    );
+    expect(result.status).toBe("PENDING"); // SET_TERMS also works on PENDING
+    const updated = await db.track.findUniqueOrThrow({ where: { id: track.id } });
+    expect(updated.language).toBeNull(); // instrumental: language never applied
+    const terms = await db.trackTerm.findMany({ where: { trackId: track.id }, include: { term: true } });
+    expect(terms.map((t) => `${t.term.kind}:${t.term.slug}`).sort()).toEqual(["DIRECTION:classical"]);
   });
 });
 
@@ -2171,6 +2324,66 @@ describe.skipIf(!databaseUrl)("track submission (H-203)", () => {
     const body = (await res.json()) as { tracks: Array<{ id: string; statementOfReasons: string | null }> };
     expect(body.tracks.map((t) => t.id)).toEqual([mine.id]);
     expect(body.tracks[0].statementOfReasons).toBeNull();
+  });
+
+  it("H-402: submission writes confirmed terms — LANGUAGE derived from the primary subtag, style and direction from the vocabulary", async () => {
+    const { user: u } = await artist();
+    const { loadEnv: le } = await import("@/server/env");
+    const { submitTrack } = await import("@/server/tracks/submit");
+    const result = await submitTrack(
+      u.id,
+      null,
+      {
+        ...validSubmission,
+        language: "pt-BR",
+        style: "lo-fi",
+        direction: "electronic",
+        source: { provider: "DIRECT_URL", url: "https://author-host.test/pt.mp3" },
+      } as never,
+      le(),
+      seam() as never,
+    );
+    const terms = await db.trackTerm.findMany({ where: { trackId: result.trackId }, include: { term: true } });
+    const got = terms.map((t) => ({ kind: t.term.kind, slug: t.term.slug, confirmed: t.confirmed })).sort((a, b) => a.slug.localeCompare(b.slug));
+    expect(got).toEqual([
+      { kind: "DIRECTION", slug: "electronic", confirmed: true },
+      { kind: "STYLE", slug: "lo-fi", confirmed: true },
+      { kind: "LANGUAGE", slug: "pt", confirmed: true }, // pt-BR → pt
+    ]);
+    const track = await db.track.findUniqueOrThrow({ where: { id: result.trackId } });
+    expect(track.language).toBe("pt-BR"); // the tag is kept verbatim on the track
+    expect(track.instrumental).toBe(false);
+  });
+
+  it("H-402: an instrumental submission gets no LANGUAGE term; free-text tags stay impossible", async () => {
+    const { user: u } = await artist();
+    const { loadEnv: le } = await import("@/server/env");
+    const { submitTrack } = await import("@/server/tracks/submit");
+    const res = await submitTrack(
+      u.id,
+      null,
+      {
+        ...validSubmission,
+        instrumental: true,
+        language: undefined,
+        style: "drum-and-bass",
+        direction: "electronic",
+        source: { provider: "DIRECT_URL", url: "https://author-host.test/idm.mp3" },
+      } as never,
+      le(),
+      seam() as never,
+    );
+    const terms = await db.trackTerm.findMany({ where: { trackId: res.trackId }, include: { term: true } });
+    expect(terms.map((t) => `${t.term.kind}:${t.term.slug}`).sort()).toEqual(["DIRECTION:electronic", "STYLE:drum-and-bass"]);
+
+    // Unknown slugs are rejected before any network access (route level).
+    const { user: u2 } = await artist();
+    expect((await postTracks({ ...validSubmission, style: "not-a-style" }, u2)).status).toBe(422);
+    expect((await postTracks({ ...validSubmission, direction: "discovery" }, u2)).status).toBe(422);
+    // A known slug passes the schema (the happy path runs through the
+    // service above — the bare route would try a real source probe).
+    const { submissionSchema } = await import("@/server/tracks/submit");
+    expect(submissionSchema.safeParse({ ...validSubmission, style: "lo-fi", direction: "electronic" }).success).toBe(true);
   });
 });
 
