@@ -1,0 +1,64 @@
+{
+  "electronic": {
+    "synthwave": "Synthwave",
+    "house": "House",
+    "techno": "Techno",
+    "trance": "Trance",
+    "drum-and-bass": "Drum & Bass",
+    "dubstep": "Dubstep",
+    "downtempo": "Downtempo",
+    "lo-fi": "Lo-fi"
+  },
+  "rock": {
+    "indie-rock": "Indie Rock",
+    "alternative-rock": "Alternative Rock",
+    "hard-rock": "Hard Rock",
+    "punk": "Punk",
+    "post-rock": "Post-rock",
+    "shoegaze": "Shoegaze"
+  },
+  "pop": {
+    "synth-pop": "Synth-pop",
+    "indie-pop": "Indie Pop",
+    "dance-pop": "Dance-pop",
+    "singer-songwriter": "Singer-songwriter"
+  },
+  "hip-hop": {
+    "trap": "Trap",
+    "boom-bap": "Boom Bap",
+    "rap": "Rap",
+    "r-and-b": "R&B"
+  },
+  "jazz-blues": {
+    "jazz": "Jazz",
+    "blues": "Blues",
+    "soul": "Soul",
+    "funk": "Funk"
+  },
+  "classical": {
+    "orchestral": "Orchestral",
+    "piano": "Piano",
+    "chamber": "Chamber"
+  },
+  "folk-world": {
+    "folk": "Folk",
+    "acoustic": "Acoustic",
+    "latin": "Latin",
+    "reggae": "Reggae"
+  },
+  "ambient-experimental": {
+    "ambient": "Ambient",
+    "drone": "Drone",
+    "experimental": "Experimental"
+  },
+  "metal": {
+    "heavy-metal": "Heavy Metal",
+    "death-metal": "Death Metal",
+    "black-metal": "Black Metal",
+    "doom": "Doom"
+  },
+  "soundtrack": {
+    "cinematic": "Cinematic",
+    "game-music": "Game Music"
+  }
+}
