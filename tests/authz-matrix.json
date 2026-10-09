@@ -132,6 +132,17 @@
     "banned": 403
    }
   },
+  "/api/mod/comments/:id": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 403,
+    "ARTIST": 403,
+    "MODERATOR": 422,
+    "ADMIN": 422,
+    "banned": 403
+   }
+  },
   "/api/mod/reports/resolve": {
    "method": "POST",
    "expected": {
@@ -152,6 +163,41 @@
     "MODERATOR": 200,
     "ADMIN": 200,
     "banned": 200
+   }
+  },
+  "/api/comments/:id": [
+   {
+    "method": "PATCH",
+    "expected": {
+     "anonymous": 401,
+     "LISTENER": 422,
+     "ARTIST": 422,
+     "MODERATOR": 422,
+     "ADMIN": 422,
+     "banned": 403
+    }
+   },
+   {
+    "method": "DELETE",
+    "expected": {
+     "anonymous": 401,
+     "LISTENER": 422,
+     "ARTIST": 422,
+     "MODERATOR": 422,
+     "ADMIN": 422,
+     "banned": 403
+    }
+   }
+  ],
+  "/api/comments/:id/hide": {
+   "method": "POST",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 422,
+    "ARTIST": 422,
+    "MODERATOR": 422,
+    "ADMIN": 422,
+    "banned": 403
    }
   },
   "/api/mod/tracks/resolve": {
@@ -336,6 +382,30 @@
     "ADMIN": 404,
     "banned": 404
    }
-  }
+  },
+  "/api/tracks/:id/comments": [
+   {
+    "method": "GET",
+    "expected": {
+     "anonymous": 422,
+     "LISTENER": 422,
+     "ARTIST": 422,
+     "MODERATOR": 422,
+     "ADMIN": 422,
+     "banned": 422
+    }
+   },
+   {
+    "method": "POST",
+    "expected": {
+     "anonymous": 401,
+     "LISTENER": 422,
+     "ARTIST": 422,
+     "MODERATOR": 422,
+     "ADMIN": 422,
+     "banned": 403
+    }
+   }
+  ]
  }
 }
