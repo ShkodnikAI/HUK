@@ -35,7 +35,7 @@ published only after the record is on `main`. Where a published issue differs fr
 | H-205 | #49 | W2 | merged (PR #65; disabled until D5) |
 | H-206 | #50 | W2 | merged (PR #64) |
 | H-207 | #51 | W2 | merged (PR #66) |
-| H-208 | #52 | W2 | open, rewritten 2026-10-08 (D13: AI escalates only; no provider chosen) |
+| H-208 | #52 | W2 | PARKED 2026-10-09 (Owner); rewritten 2026-10-08, D13 |
 | H-210 | #53 | W2 | merged (PR #59) |
 | H-211 | #68 | W3 follow-up | open |
 | H-212 | #69 | W3 follow-up | open |
@@ -47,9 +47,9 @@ published only after the record is on `main`. Where a published issue differs fr
 | H-304 | #75 | W3 | open |
 | H-305 | #76 | W3 | open |
 | H-214 | #77 | W3 | open |
-| H-215 | #85 | W3 (moderation line) | open |
-| H-216 | #86 | W3 (moderation line) | open |
-| H-217 | #87 | W3 (moderation line) | open |
+| H-215 | #85 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
+| H-216 | #86 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
+| H-217 | #87 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
 
 ---
 
@@ -198,6 +198,8 @@ Done: snapshot idempotent; categories under 20 tracks collapse to parent; cachea
 **H-216 — Risk-sorted moderator queue, text flags, shadow-mode agreement report.** `[feature]` Issue #86. Measures AI vs human so that auto-decisions can be switched on later on evidence.
 
 **H-217 — Free-licence tracks.** `[feature]` `OD` Issue #87. The only way to submit a recording by someone else (D12: no "pirate" mode); always human-reviewed.
+
+**Parked by the Owner (2026-10-09):** H-208, H-215, H-216, H-217 wait until the radio plays on a real server. Critical path: hosting and first deployment (H-504 pulled forward), real-device playback check, UI screens, the rest of W3, closed beta.
 
 **Not published (parked):** the cloud LLM transport (extend the trusted door with POST, request body and an auth header, add the provider host) — a security-class change to S4; written and published only after the Owner chooses a provider.
 
