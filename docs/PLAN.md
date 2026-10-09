@@ -51,6 +51,7 @@ published only after the record is on `main`. Where a published issue differs fr
 | H-216 | #86 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
 | H-217 | #87 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
 | H-504 | #89 | pulled forward from W5 (Owner, 2026-10-09) | open |
+| H-112 | #90 | critical path (Owner, 2026-10-09, D14) | open |
 
 ---
 
@@ -241,6 +242,9 @@ Scope: nightly `pg_dump` off-box, documented restore, timed drill.
 Done: restore on a clean host within the target time; runbook in `docs/RUNBOOK.md`.
 
 **H-504 — Deployment.** `[process]` `OD` Issue #89. Pulled forward 2026-10-09: first deployment on the Owner's own 24/7 Linux server (Docker Compose + Cloudflare Tunnel), prod compose file, env check, update with automatic rollback, nightly backup and restore drill, runbook. A rented VPS (D4) is deferred and reuses the same files. Owner acceptance happens on the real host.
+
+**H-112 - Broadcast audio cache.** `[feature]` security-class, Issue #90. Owner decision D14 (2026-10-09, amends S3): the worker fetches each `DIRECT_URL` track once, checks it against the moderated hash, keeps the slot on air plus the next five in a private directory, and listeners stream it from `/api/audio/:trackId`, so authors' hosts are not loaded by listeners. Purge on takedown, no fallback to the author's URL, CI check `audio-store`. AUDIUS and SEED not cached.
+Done: one request to the author host per airing regardless of listeners; eviction cases tested; Range 206/416 correct; Owner check on the host.
 
 **H-505 — Closed beta.** `[process]`
 Scope: invite-only, caps low, metrics, triage loop.
