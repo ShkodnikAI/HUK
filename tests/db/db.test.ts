@@ -700,6 +700,152 @@ describe.skipIf(!databaseUrl)("comments (H-303)", () => {
   });
 });
 
+describe.skipIf(!databaseUrl)("charts (H-305)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+    await seed(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  /** An APPROVED, available track with a score row in the given categories. */
+  async function eligibleTrack(title: string, score: number, categoryKeys: string[], opts?: { status?: "APPROVED" | "TAKEN_DOWN"; available?: boolean; voters?: number }) {
+    const track = await db.track.create({
+      data: {
+        title,
+        status: opts?.status ?? "APPROVED",
+        available: opts?.available ?? true,
+        language: null,
+        instrumental: false,
+      },
+    });
+    for (const categoryKey of categoryKeys) {
+      await db.trackScore.create({
+        data: { trackId: track.id, categoryKey, score, nEff: score, voters: opts?.voters ?? 10 },
+      });
+    }
+    return track;
+  }
+
+  it("recomputeTrackScores writes the per-category rows and drops the categories the track left", async () => {
+    const { languageTermSlug } = await import("@/server/taxonomy/vocabulary");
+    const style = await db.taxonomyTerm.findUniqueOrThrow({ where: { kind_slug: { kind: "STYLE", slug: "punk" } } });
+    const direction = await db.taxonomyTerm.findUniqueOrThrow({ where: { kind_slug: { kind: "DIRECTION", slug: "rock" } } });
+    const track = await db.track.create({
+      data: { title: "categorised", status: "APPROVED", available: true, language: "pt-BR", instrumental: false },
+    });
+    await db.trackTerm.createMany({
+      data: [
+        { trackId: track.id, termId: style.id, confirmed: true },
+        { trackId: track.id, termId: direction.id, confirmed: true },
+      ],
+    });
+
+    const { recomputeTrackScores } = await import("@/server/ranking/job");
+    await recomputeTrackScores([track.id], Date.now(), { client: db });
+
+    const keys = (await db.trackScore.findMany({ where: { trackId: track.id } })).map((r) => r.categoryKey).sort();
+    expect(keys).toEqual(["all", "direction:rock", "lang:pt", "lang:pt+style:punk", "style:punk"]);
+    expect(languageTermSlug("pt-BR")).toBe("pt");
+
+    // The moderator re-terms the track (H-402 SET_TERMS): the STYLE kind is
+    // replaced, so the category set changes (punk leaves, jazz arrives) and
+    // the reconcile pass must rewrite the score rows.
+    const moderator = await db.user.create({ data: { email: `mod-${Date.now()}@test.example`, role: "MODERATOR" } });
+    const { moderatorTrackAction } = await import("@/server/tracks/moderator-actions");
+    await moderatorTrackAction({ trackId: track.id, action: "SET_TERMS", terms: { style: "jazz" } }, moderator, { client: db });
+
+    const { makeRankingJobs } = await import("@/server/ranking/job");
+    const reconcile = makeRankingJobs({ client: db }).find((j) => j.name === "chart-category-reconcile")!;
+    await reconcile.run();
+    const after = (await db.trackScore.findMany({ where: { trackId: track.id } })).map((r) => r.categoryKey).sort();
+    expect(after).toEqual(["all", "direction:rock", "lang:pt", "lang:pt+style:jazz", "style:jazz"]);
+  });
+
+  it("a category with 19 eligible tracks is not listed, with 20 it is", async () => {
+    for (let i = 0; i < 20; i++) {
+      await eligibleTrack(`ru-${i}`, 50 - i, ["all", "lang:ru"]);
+    }
+    // 20 eligible in lang:ru → the category is published.
+    const { chartIndex } = await import("@/server/charts/service");
+    expect((await chartIndex({ client: db })).some((c) => c.key === "lang:ru")).toBe(true);
+
+    // Drop to 19 → not listed (the tracks stay in `all`).
+    const victim = await db.track.findFirstOrThrow({ where: { title: "ru-0" } });
+    await db.trackScore.deleteMany({ where: { trackId: victim.id, categoryKey: "lang:ru" } });
+    expect((await chartIndex({ client: db })).some((c) => c.key === "lang:ru")).toBe(false);
+  });
+
+  it("the top-100 cap, the sub-threshold rule and the absence of dislike data", async () => {
+    for (let i = 0; i < 101; i++) {
+      await eligibleTrack(`top-${i}`, 200 - i, ["all"]);
+    }
+    // A taken-down, an unavailable and a sub-threshold track must never appear.
+    await eligibleTrack("taken", 1000, ["all"], { status: "TAKEN_DOWN" });
+    await eligibleTrack("unavailable", 1000, ["all"], { available: false });
+    await eligibleTrack("sub-threshold", 1000, ["all"], { voters: 9 });
+
+    const { GET } = await import("@/app/api/charts/[category]/route");
+    const res = await GET(new Request("http://localhost:3000/api/charts/all"), { params: Promise.resolve({ category: "all" }) });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toContain("s-maxage=60");
+    const body = (await res.json()) as { entries: Array<{ rank: number; title: string; likes: number; restrictedIn: string[] }> };
+    expect(body.entries).toHaveLength(100); // 101 eligible → exactly 100
+    expect(body.entries[0].rank).toBe(1);
+    const titles = body.entries.map((e) => e.title);
+    expect(titles).not.toContain("taken");
+    expect(titles).not.toContain("unavailable");
+    expect(titles).not.toContain("sub-threshold");
+    expect(body.entries[0].title).toBe("top-0"); // highest score first
+    // No dislike data anywhere in the payload (S2, done criteria).
+    const raw = JSON.stringify(body);
+    expect(raw.toLowerCase()).not.toContain("dislike");
+    expect(Object.keys(body.entries[0])).toEqual(["rank", "trackId", "title", "artist", "likes", "restrictedIn"]);
+
+    // Unknown categories answer 404 (fail closed).
+    const unknown = await GET(new Request("http://localhost:3000/api/charts/lang:xx"), { params: Promise.resolve({ category: "lang:xx" }) });
+    expect(unknown.status).toBe(404);
+  });
+
+  it("the weekly snapshot: idempotent per week, stable in the archive after scores change", async () => {
+    for (let i = 0; i < 20; i++) {
+      await eligibleTrack(`snap-${i}`, 100 - i, ["all"]);
+    }
+    const { ensureWeeklySnapshots, chartArchive, utcWeekStart } = await import("@/server/charts/service");
+    const now = new Date("2026-10-10T12:00:00Z"); // Saturday of the Oct 5 week
+
+    expect(await ensureWeeklySnapshots(now, { client: db })).toMatch(/1 snapshot/);
+    // Second run for the same week → no new snapshot.
+    expect(await ensureWeeklySnapshots(now, { client: db })).toMatch(/0 snapshot/);
+    const weekStart = utcWeekStart(now);
+    const snapshots = await db.chartSnapshot.findMany({ where: { weekStart, categoryKey: "all" } });
+    expect(snapshots).toHaveLength(1);
+
+    const archiveBefore = await chartArchive("all", weekStart, { client: db });
+    expect(archiveBefore).toHaveLength(20);
+    expect(archiveBefore![0]).toMatchObject({ rank: 1, title: "snap-0" });
+
+    // Scores change and the recompute rewrites TrackScore — the archive
+    // stays exactly as stored.
+    await db.trackScore.updateMany({ where: { categoryKey: "all" }, data: { score: 0 } });
+    await ensureWeeklySnapshots(now, { client: db });
+    const archiveAfter = await chartArchive("all", weekStart, { client: db });
+    expect(archiveAfter).toEqual(archiveBefore);
+
+    // The archive route serves the stored list; a non-Monday week 404s.
+    const { GET } = await import("@/app/api/charts/[category]/archive/route");
+    const ok = await GET(new Request(`http://localhost:3000/api/charts/all/archive?week=2026-10-05`), { params: Promise.resolve({ category: "all" }) });
+    expect(ok.status).toBe(200);
+    const bad = await GET(new Request(`http://localhost:3000/api/charts/all/archive?week=2026-10-07`), { params: Promise.resolve({ category: "all" }) });
+    expect(bad.status).toBe(404); // Wednesday is not a week start
+  });
+});
+
 describe.skipIf(!databaseUrl)("rate limiter (H-103)", () => {
   const db = makeClient();
 
