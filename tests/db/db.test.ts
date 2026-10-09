@@ -4141,7 +4141,7 @@ describe.skipIf(!databaseUrl)("broadcast audio cache (H-112, D14)", () => {
   }
 
   /** safeFetch resolves DNS BEFORE the loader seam — a fake resolver is always needed. */
-  const fakeResolver = async () => ["203.0.113.9"];
+  const fakeResolver = async () => ["93.184.216.34"]; // global unicast — passes classification (see the H-201 seams)
 
   function seamOver(over: Partial<AudioCacheSeam> & { loader: SafeLoader }): AudioCacheSeam {
     return {
