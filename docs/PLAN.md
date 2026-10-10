@@ -40,18 +40,18 @@ published only after the record is on `main`. Where a published issue differs fr
 | H-211 | #68 | W3 follow-up | merged (PR #80) |
 | H-212 | #69 | W3 follow-up | merged (PR #79) |
 | H-213 | #70 | W3 follow-up | merged (PR #81) |
-| H-402 | #71 | W3 (pulled forward from W4) | open, waits for Owner confirmation of the vocabulary |
+| H-402 | #71 | W3 (pulled forward from W4) | merged (PR #96; vocabulary approved by the Owner 2026-10-08) |
 | H-301 | #72 | W3 | merged (PR #82) |
 | H-302 | #73 | W3 | merged (PR #83) |
-| H-303 | #74 | W3 | open, publication policy default (a) |
+| H-303 | #74 | W3 | merged (PR #97; publication policy default (a)) |
 | H-304 | #75 | W3 | merged (PR #84) |
-| H-305 | #76 | W3 | open |
-| H-214 | #77 | W3 | open |
+| H-305 | #76 | W3 | merged (PR #98; shell, fonts and nav flag follow with H-120) |
+| H-214 | #77 | W3 | merged (PR #99; account screen and lyrics erasure follow with H-122/H-123) |
 | H-215 | #85 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
 | H-216 | #86 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
 | H-217 | #87 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
 | H-504 | #89 | pulled forward from W5 (Owner, 2026-10-09) | open |
-| H-112 | #90 | critical path (Owner, 2026-10-09, D14) | open |
+| H-112 | #90 | critical path (Owner, 2026-10-09, D14) | merged (PR #95); audit pending |
 | H-120 | #91 | critical path: UI (Owner, 2026-10-09) | open |
 | H-121 | #92 | critical path: UI | open, after H-120 |
 | H-122 | #93 | critical path: UI | open, after H-120 |
