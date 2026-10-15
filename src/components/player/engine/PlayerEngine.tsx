@@ -1,7 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
+// The radio ENGINE (H-121 task 1): one <audio> element mounted ONCE in the
+// locale layout, all playback behaviour lives here, and views (the radio
+// screen, the mini player) read the typed usePlayer() hook. A refactor
+// first: the behaviour is moved verbatim from the former radio-player.tsx
+// (poll /api/radio/now adaptively, server-clock skew, drift correction,
+// geo restrictions, listen heartbeat, per-slot retry budget, Media
+// Session, playlist on-demand playback). New in H-121: the private
+// DISLIKE action (never a count, never anyone else's state) and the
+// now-playing metadata the radio screen needs (likes, language,
+// instrumental, aiGenerated).
+
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   computeSkew,
   expectedOffsetMs,
@@ -20,38 +30,77 @@ import {
   watchPlaybackFailures,
   type FailureState,
 } from "@/lib/sync/playback";
-import { applyRestrictions, type RadioNowResponse } from "@/lib/radio/contract";
+import { applyRestrictions, type RadioNowResponse, type RadioNowTrack } from "@/lib/radio/contract";
 import { sendFinalBeat, startListenSession } from "@/lib/listen/client";
-import { CommentsThread } from "@/components/comments/comments-thread";
 
-// The persistent radio player (H-105): one <audio> element mounted in the
-// root locale layout so it survives navigation. Polls /api/radio/now
-// adaptively (min(10 s, endsAt − now) while playing; standby backs off
-// 2 s → 5 s with jitter), syncs to the server clock (skew), corrects
-// drift > 3 s by seeking, re-syncs on visibilitychange/online, retries a
-// failing slot at most twice (H-212, G3) and exposes Media Session
-// metadata with play/pause (no seek — live radio).
+export type PlayerMode = "radio" | "playlist";
 
-type Mode = "radio" | "playlist";
+export type QueueItem = { trackId: string; title: string | null; unavailable: boolean; audioUrl: string };
 
-interface NowState {
-  current: (RadioNowResponse["current"] & { track: { audioUrl: string } }) | null;
-  next: RadioNowResponse["next"];
+export type PlaylistSummary = { id: string; name: string; itemCount: number };
+
+export type NowPlaying = {
+  track: RadioNowTrack;
+  startsAt: number;
+  endsAt: number;
+  /** Server-timeline offset of the listener (ms into the slot). */
+  offsetMs: number;
+};
+
+export type PlayerState = {
+  mode: PlayerMode;
+  playing: boolean;
+  /** The current slot AFTER geo restrictions (null = standby). */
+  now: NowPlaying | null;
+  /** The timeline as /now returned it (before geo filtering) — upcoming slots. */
+  upcoming: RadioNowResponse["next"];
+  playbackFailed: boolean;
+  /** Own reaction state for the current track (never anyone else's). */
+  reaction: "LIKE" | "DISLIKE" | null;
+  likeLocked: boolean;
+  playlists: PlaylistSummary[];
+  queue: QueueItem[];
+  queueIndex: number | null;
+};
+
+export type PlayerActions = {
+  playPause: () => void;
+  setMode: (mode: PlayerMode) => void;
+  like: () => void;
+  /** Private dislike — no count exists anywhere, for anyone (H-121). */
+  dislike: () => void;
+  refreshOwnReactions: () => void;
+  loadPlaylists: () => Promise<void>;
+  openQueue: (playlistId: string) => Promise<void>;
+  startPlaylistItem: (index: number) => Promise<void>;
+  skipPlaylist: (delta: number) => void;
+  addToPlaylist: (playlistId: string) => Promise<boolean>;
+  /** Server-timeline progress of the current slot (ms), or null on standby. */
+  progressMs: () => number | null;
+  /** The skew-corrected server clock (ms). */
+  serverNowMs: () => number;
+};
+
+const PlayerContext = createContext<{ state: PlayerState; actions: PlayerActions } | null>(null);
+
+export function usePlayer(): { state: PlayerState; actions: PlayerActions } {
+  const ctx = useContext(PlayerContext);
+  if (!ctx) throw new Error("usePlayer must be used inside <PlayerProvider>");
+  return ctx;
 }
 
-export function RadioPlayer() {
-  const t = useTranslations("player");
-  const commentsT = useTranslations("comments");
+export function PlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const skewRef = useRef(0);
   const currentRef = useRef<ServerSlot | null>(null);
   const countryRef = useRef<string | null | undefined>(undefined);
-  const [mode, setMode] = useState<Mode>("radio");
-  const modeRef = useRef<Mode>("radio");
+  const [mode, setMode] = useState<PlayerMode>("radio");
+  const modeRef = useRef<PlayerMode>("radio");
   const [playing, setPlaying] = useState(false);
-  const [nowTitle, setNowTitle] = useState<string | null>(null);
+  const [now, setNow] = useState<NowPlaying | null>(null);
+  const [upcoming, setUpcoming] = useState<RadioNowResponse["next"]>([]);
   const stoppedRef = useRef(false);
-  // H-301: server-verified listening + the like button.
+  // H-301: server-verified listening + the reaction buttons.
   const [slotTrackId, setSlotTrackId] = useState<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const beatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -59,19 +108,25 @@ export function RadioPlayer() {
   const [reaction, setReaction] = useState<"LIKE" | "DISLIKE" | null>(null);
   const [likeLocked, setLikeLocked] = useState(false);
   // H-302: the playlist playback mode.
-  const [playlists, setPlaylists] = useState<Array<{ id: string; name: string; itemCount: number }>>([]);
-  const [queue, setQueue] = useState<Array<{ trackId: string; title: string | null; unavailable: boolean; audioUrl: string }>>([]);
+  const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueIndex, setQueueIndex] = useState<number | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
   // H-212 (G3): per-slot retry budget and standby backoff state.
   const failedRef = useRef<FailureState | null>(null);
   const emptyPollsRef = useRef(0);
   const pollNowRef = useRef<() => void>(() => {});
   const [playbackFailed, setPlaybackFailed] = useState(false);
+  // H-121: the playing flag is read inside applyTimeline (verbatim move) —
+  // a ref keeps the callback stable for the poll loop (synced in an effect:
+  // refs are not touched during render).
+  const playingRef = useRef(false);
+  useEffect(() => {
+    playingRef.current = playing;
+  }, [playing]);
 
-  // H-302: switching tabs toggles who owns the audio element; leaving the
+  // H-302: switching modes toggles who owns the audio element; leaving the
   // playlist mode stops on-demand playback.
-  const switchMode = useCallback((next: Mode): void => {
+  const switchMode = useCallback((next: PlayerMode): void => {
     modeRef.current = next;
     if (next === "radio") {
       if (sessionIdRef.current) {
@@ -109,6 +164,17 @@ export function RadioPlayer() {
     const effective = applyRestrictions(data, countryRef.current);
     const current = effective.current;
     currentRef.current = current ? { startsAt: current.startsAt, endsAt: current.endsAt } : null;
+    setUpcoming(effective.next);
+    setNow(
+      current
+        ? {
+            track: current.track,
+            startsAt: current.startsAt,
+            endsAt: current.endsAt,
+            offsetMs: current.offsetMs,
+          }
+        : null,
+    );
 
     if (modeRef.current === "playlist") {
       // H-302: on-demand playback owns the audio element; the radio
@@ -129,7 +195,6 @@ export function RadioPlayer() {
 
     if (!current) {
       // Nothing scheduled: stay on standby.
-      setNowTitle(null);
       audio.pause();
       if (audio.src) audio.removeAttribute("src");
       if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
@@ -137,10 +202,9 @@ export function RadioPlayer() {
     }
 
     emptyPollsRef.current = 0; // a slot is playing again
-    setNowTitle(`${current.track.title}${current.track.artist ? ` — ${current.track.artist}` : ""}`);
     if (current.track.id !== reactionTrackRef.current) {
-      // H-301: a new track resets the like state (done in this callback, not
-      // an effect body, to avoid cascading renders).
+      // H-301: a new track resets the reaction state (done in this callback,
+      // not an effect body, to avoid cascading renders).
       reactionTrackRef.current = current.track.id;
       setReaction(null);
       setLikeLocked(false);
@@ -155,7 +219,7 @@ export function RadioPlayer() {
       audio.src = wanted;
       audio.currentTime = expectedOffsetMs({ startsAt: current.startsAt, endsAt: current.endsAt }, nowServer) / 1000;
       if (retrying) audio.load();
-      if (playing) void audio.play().catch(() => {});
+      if (playingRef.current) void audio.play().catch(() => {});
     }
 
     if ("mediaSession" in navigator) {
@@ -168,7 +232,7 @@ export function RadioPlayer() {
         ],
       });
     }
-  }, [playing]);
+  }, []);
 
   // Poll loop: adaptive delay from the pure helper; standby (current ===
   // null) backs off 2 s then 5 s with ±20 % jitter; also re-syncs on
@@ -264,7 +328,7 @@ export function RadioPlayer() {
     }
     let cancelled = false;
     void (async () => {
-      const sid = await startListenSession({ trackId: slotTrackId, mode: "RADIO", anonId: anonId() });
+      const sid = await startListenSession({ trackId: slotTrackId, mode: modeRef.current === "playlist" ? "PLAYLIST" : "RADIO", anonId: anonId() });
       if (!sid || cancelled || sessionIdRef.current) return;
       sessionIdRef.current = sid;
       beatTimerRef.current = setInterval(() => {
@@ -285,35 +349,36 @@ export function RadioPlayer() {
 
   // H-301: the caller's own reaction state for the current track (fetched
   // once per track; the reset on a track change happens in applyTimeline).
-  useEffect(() => {
-    if (!slotTrackId || reactionTrackRef.current !== slotTrackId) return;
-    let cancelled = false;
+  const refreshOwnReactions = useCallback((): void => {
+    const trackId = reactionTrackRef.current;
+    if (!trackId) return;
     void (async () => {
       try {
-        const res = await fetch(`/api/me/reactions?trackIds=${encodeURIComponent(slotTrackId)}`, { cache: "no-store" });
+        const res = await fetch(`/api/me/reactions?trackIds=${encodeURIComponent(trackId)}`, { cache: "no-store" });
         if (!res.ok) return; // anonymous: no own state to show
         const body = (await res.json()) as { reactions?: Array<{ trackId: string; type: "LIKE" | "DISLIKE" }> };
-        if (!cancelled && body.reactions && body.reactions.length > 0) setReaction(body.reactions[0].type);
+        if (body.reactions && body.reactions.length > 0) setReaction(body.reactions[0].type);
       } catch {
         /* offline: the button still works */
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [slotTrackId]);
+  }, []);
 
-  // H-302: playlist mode — queue, next/previous, seek allowed, PLAYLIST
-  // listening sessions, and the add-to-playlist action.
+  useEffect(() => {
+    if (!slotTrackId || reactionTrackRef.current !== slotTrackId) return;
+    refreshOwnReactions();
+  }, [slotTrackId, refreshOwnReactions]);
+
+  // H-302: playlist mode — queue, next/previous, seek allowed.
   const loadPlaylists = useCallback(async (): Promise<void> => {
     try {
       const res = await fetch("/api/playlists", { cache: "no-store" });
       if (res.ok) {
-        const body = (await res.json()) as { playlists?: Array<{ id: string; name: string; itemCount: number }> };
+        const body = (await res.json()) as { playlists?: PlaylistSummary[] };
         setPlaylists(body.playlists ?? []);
       }
     } catch {
-      /* offline: the select stays empty */
+      /* offline: the picker stays empty */
     }
   }, []);
 
@@ -347,7 +412,6 @@ export function RadioPlayer() {
       audio.src = new URL(item.audioUrl, window.location.origin).toString();
       audio.currentTime = 0;
       setQueueIndex(index);
-      setNowTitle(item.title);
       void audio.play().then(() => setPlaying(true)).catch(() => {});
     },
     [queue, anonId],
@@ -364,51 +428,56 @@ export function RadioPlayer() {
   );
 
   const addToPlaylist = useCallback(
-    (playlistId: string): void => {
+    async (playlistId: string): Promise<boolean> => {
       const trackId = slotTrackId;
-      if (!trackId) return;
-      void (async () => {
-        try {
-          const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/items`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ trackId }),
-          });
-          if (res.ok) setAddOpen(false);
-        } catch {
-          /* offline */
-        }
-      })();
+      if (!trackId) return false;
+      try {
+        const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/items`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ trackId }),
+        });
+        return res.ok;
+      } catch {
+        return false; // offline
+      }
     },
     [slotTrackId],
   );
 
-  const onLike = useCallback((): void => {
-    const trackId = slotTrackId;
-    if (!trackId) return;
-    void (async () => {
-      try {
-        if (reaction === "LIKE") {
-          const res = await fetch(`/api/reactions/${encodeURIComponent(trackId)}`, { method: "DELETE" });
-          if (res.ok) setReaction(null);
-          return;
+  const react = useCallback(
+    (type: "LIKE" | "DISLIKE"): void => {
+      const trackId = slotTrackId;
+      if (!trackId) return;
+      void (async () => {
+        try {
+          if (reaction === type) {
+            const res = await fetch(`/api/reactions/${encodeURIComponent(trackId)}`, { method: "DELETE" });
+            if (res.ok) setReaction(null);
+            return;
+          }
+          const res = await fetch("/api/reactions", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ trackId, type }),
+          });
+          if (res.ok) {
+            setReaction(type);
+            if (type === "LIKE") setLikeLocked(false);
+          } else if (res.status === 403) {
+            setLikeLocked(true); // the 30 s verification gate
+          }
+        } catch {
+          /* offline: keep the current state */
         }
-        const res = await fetch("/api/reactions", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ trackId, type: "LIKE" }),
-        });
-        if (res.ok) {
-          setReaction("LIKE");
-          setLikeLocked(false);
-        } else if (res.status === 403) {
-          setLikeLocked(true); // the 30 s verification gate
-        }
-      } catch {
-        /* offline: keep the current state */
-      }
-    })();
-  }, [slotTrackId, reaction]);
+      })();
+    },
+    [slotTrackId, reaction],
+  );
+
+  const like = useCallback((): void => react("LIKE"), [react]);
+  // H-121: the private dislike — no count, no public state, anywhere.
+  const dislike = useCallback((): void => react("DISLIKE"), [react]);
 
   // H-212 (G3): audio error / stall > 10 s re-polls /now immediately; the
   // same slot is retried at most twice, then the failure state is shown
@@ -462,12 +531,12 @@ export function RadioPlayer() {
     };
   }, []);
 
-  const onPlayPause = (): void => {
+  const playPause = useCallback((): void => {
     const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
       const slot = currentRef.current;
-      if (slot) {
+      if (slot && modeRef.current === "radio") {
         const expected = expectedOffsetMs(slot, serverNow(Date.now(), skewRef.current));
         if (needsDriftCorrection(expected, audio.currentTime * 1000)) {
           audio.currentTime = expected / 1000;
@@ -478,126 +547,48 @@ export function RadioPlayer() {
       audio.pause();
       setPlaying(false);
     }
+  }, []);
+
+  const progressMs = useCallback((): number | null => {
+    const slot = currentRef.current;
+    if (!slot) return null;
+    return expectedOffsetMs(slot, serverNow(Date.now(), skewRef.current));
+  }, []);
+
+  const serverNowMs = useCallback((): number => serverNow(Date.now(), skewRef.current), []);
+
+  const state: PlayerState = {
+    mode,
+    playing,
+    now,
+    upcoming,
+    playbackFailed,
+    reaction,
+    likeLocked,
+    playlists,
+    queue,
+    queueIndex,
+  };
+  const actions: PlayerActions = {
+    playPause,
+    setMode: switchMode,
+    like,
+    dislike,
+    refreshOwnReactions,
+    loadPlaylists,
+    openQueue,
+    startPlaylistItem,
+    skipPlaylist,
+    addToPlaylist,
+    progressMs,
+    serverNowMs,
   };
 
   return (
-    <section aria-label={t("nowPlaying")} className="w-full">
-      <div className="flex items-center gap-3">
-        <button type="button" onClick={onPlayPause} className="rounded-full border px-4 py-2">
-          {playing ? t("pause") : t("play")}
-        </button>
-        <span className="text-sm text-neutral-300">
-          {playbackFailed ? t("playbackFailed") : (nowTitle ?? t("standby"))}
-        </span>
-        {slotTrackId && playing && (
-          <button
-            type="button"
-            onClick={onLike}
-            aria-pressed={reaction === "LIKE"}
-            title={likeLocked ? t("likeLocked") : undefined}
-            className={`ml-auto rounded-full border px-3 py-1 text-sm ${reaction === "LIKE" ? "border-[#D4AF37] text-[#D4AF37]" : "text-neutral-300"}`}
-          >
-            {reaction === "LIKE" ? t("liked") : t("like")}
-          </button>
-        )}
-      </div>
-      <div className="mt-3 flex gap-2 text-sm" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "radio"}
-          onClick={() => setMode("radio")}
-          className={mode === "radio" ? "font-semibold text-[#D4AF37]" : "text-neutral-400"}
-        >
-          {t("modeRadio")}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "playlist"}
-          onClick={() => {
-            if (mode === "playlist") switchMode("radio");
-            else {
-              switchMode("playlist");
-              void loadPlaylists();
-            }
-          }}
-          className={mode === "playlist" ? "font-semibold text-[#D4AF37]" : "text-neutral-400"}
-        >
-          {t("modePlaylist")}
-        </button>
-      </div>
-      {mode === "playlist" && (
-        <div className="mt-3 space-y-2 text-sm">
-          <div className="flex items-center gap-2">
-            <select
-              aria-label={t("playlistPick")}
-              onChange={(e) => void openQueue(e.target.value)}
-              className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1"
-              defaultValue=""
-            >
-              <option value="" disabled>
-                {t("playlistPick")}
-              </option>
-              {playlists.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {`${p.name} (${p.itemCount})`}
-                </option>
-              ))}
-            </select>
-            <button type="button" onClick={() => void startPlaylistItem(0)} disabled={queue.length === 0} className="rounded border px-2 py-1 disabled:opacity-40">
-              {t("play")}
-            </button>
-            <button type="button" onClick={() => skipPlaylist(-1)} disabled={queueIndex === null || queueIndex <= 0} className="rounded border px-2 py-1 disabled:opacity-40">
-              {t("previous")}
-            </button>
-            <button type="button" onClick={() => skipPlaylist(1)} disabled={queueIndex === null || queueIndex >= queue.length - 1} className="rounded border px-2 py-1 disabled:opacity-40">
-              {t("next")}
-            </button>
-          </div>
-          {queue.length > 0 && (
-            <ol className="space-y-1">
-              {queue.map((item, i) => (
-                <li key={item.trackId}>
-                  <button
-                    type="button"
-                    onClick={() => void startPlaylistItem(i)}
-                    disabled={item.unavailable}
-                    className={i === queueIndex ? "font-semibold text-[#D4AF37]" : "text-neutral-300 disabled:text-neutral-600"}
-                  >
-                    {item.unavailable ? t("playlistUnavailable") : (item.title ?? "")}
-                  </button>
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
-      )}
-      {mode === "radio" && slotTrackId && playing && (
-        <details className="mt-2 text-sm" open={addOpen} onToggle={(e) => setAddOpen((e.target as HTMLDetailsElement).open)}>
-          <summary className="cursor-pointer text-neutral-400">{t("addToPlaylist")}</summary>
-          {playlists.length === 0 && <span className="text-neutral-500">{t("noPlaylists")}</span>}
-          <ul className="mt-1 space-y-1">
-            {playlists.map((p) => (
-              <li key={p.id}>
-                <button type="button" onClick={() => addToPlaylist(p.id)} className="text-neutral-300 hover:text-[#D4AF37]">
-                  {p.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-      {slotTrackId && playing && (
-        // H-303: comments for the track on air — a block under the player
-        // (the card's "player drawer" option; the track page ships with the
-        // UI wave). Text only, never HTML (S5).
-        <details className="mt-2 text-sm">
-          <summary className="cursor-pointer text-neutral-400">{commentsT("title")}</summary>
-          <CommentsThread trackId={slotTrackId} />
-        </details>
-      )}
+    <PlayerContext.Provider value={{ state, actions }}>
+      {children}
+      {/* The ONE audio element — mounted once, survives every navigation. */}
       <audio ref={audioRef} preload="none" />
-    </section>
+    </PlayerContext.Provider>
   );
 }

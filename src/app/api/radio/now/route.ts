@@ -24,6 +24,9 @@ type SlotRow = {
   audioUrl: string | null;
   restrictedIn: string[] | null;
   likes: bigint;
+  language: string | null;
+  instrumental: boolean;
+  aiGenerated: boolean;
 };
 
 /**
@@ -52,6 +55,9 @@ export async function radioNow(
            a."displayName" AS "artist",
            ts."provider"   AS "provider",
            ts."url"        AS "audioUrl",
+           t."language"    AS "language",
+           t."instrumental" AS "instrumental",
+           t."aiGenerated"  AS "aiGenerated",
            (SELECT array_agg(rr."countryCode" ORDER BY rr."countryCode")
               FROM "RegionRestriction" rr
              WHERE rr."trackId" = t."id") AS "restrictedIn",
@@ -76,6 +82,9 @@ export async function radioNow(
     audioUrl: row.provider === "DIRECT_URL" ? `/api/audio/${row.trackId}` : row.audioUrl ?? "",
     restrictedIn: row.restrictedIn ?? [],
     likes: Number(row.likes), // H-301: public LIKE counts only, never dislikes
+    language: row.language,
+    instrumental: row.instrumental,
+    aiGenerated: row.aiGenerated,
   });
 
   const first = rows[0];

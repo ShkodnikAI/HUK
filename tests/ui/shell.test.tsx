@@ -20,7 +20,7 @@ async function expectNoAxeViolations(container: HTMLElement): Promise<void> {
 }
 
 describe("navigation (H-120 task 3)", () => {
-  it("renders only ENABLED items — search, playlists and me do not exist yet", () => {
+  it("renders only ENABLED items — search and me do not exist yet (H-121: playlists on)", () => {
     renderWithMessages(
       <>
         <TopNav />
@@ -32,8 +32,8 @@ describe("navigation (H-120 task 3)", () => {
     for (const bar of bars) {
       expect(within(bar).getByRole("link", { name: "Radio" })).toBeTruthy();
       expect(within(bar).getByRole("link", { name: "Charts" })).toBeTruthy();
+      expect(within(bar).getByRole("link", { name: "Playlists" })).toBeTruthy(); // H-121 switched it on
       expect(within(bar).queryByRole("link", { name: "Search" })).toBeNull();
-      expect(within(bar).queryByRole("link", { name: "Playlists" })).toBeNull();
       expect(within(bar).queryByRole("link", { name: "Me" })).toBeNull();
     }
   });

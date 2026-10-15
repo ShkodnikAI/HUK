@@ -5,7 +5,8 @@ import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Cormorant_Garamond, Inter } from "next/font/google";
 import { routing } from "@/i18n/routing";
 import { LanguageSwitcher } from "@/components/player/language-switcher";
-import { RadioPlayer } from "@/components/player/radio-player";
+import { PlayerProvider } from "@/components/player/engine/PlayerEngine";
+import { MiniPlayer } from "@/components/player/MiniPlayer";
 import { BottomNav, TopNav } from "@/components/shell/Nav";
 import { OfflineBanner } from "@/components/shell/OfflineBanner";
 import { Wordmark } from "@/components/shell/Wordmark";
@@ -55,32 +56,34 @@ export default async function LocaleLayout({
     <html lang={locale} className={`${inter.variable} ${cormorant.variable}`}>
       <body className="min-h-screen antialiased font-ui">
         <NextIntlClientProvider>
-          <a href="#main" className="skip-link">
-            {t("skipToContent")}
-          </a>
-          <OfflineBanner />
-          <header className="flex items-center justify-between gap-4 px-5 py-3 lg:px-8">
-            <div className="flex items-center gap-6">
-              <Wordmark />
-              <TopNav />
-            </div>
-            <LanguageSwitcher />
-          </header>
-          <main
-            id="main"
-            className="mx-auto w-full max-w-[1100px] px-5 pb-28 lg:px-8 lg:pb-8"
-          >
-            {children}
-          </main>
           {/*
-            The persistent player owns the single <audio> element and must
-            stay mounted across navigation (ARCHITECTURE §5): it lives in
-            the LAYOUT, outside <main> — navigation swaps the children only.
+            H-121: the audio ENGINE is mounted ONCE here and survives every
+            navigation; the radio screen (home) and the mini player below
+            are views over the same engine instance.
           */}
-          <footer className="fixed inset-x-0 bottom-[56px] z-30 px-5 pb-2 lg:static lg:px-8 lg:pb-6">
-            <RadioPlayer />
-          </footer>
-          <BottomNav />
+          <PlayerProvider>
+            <a href="#main" className="skip-link">
+              {t("skipToContent")}
+            </a>
+            <OfflineBanner />
+            <header className="flex items-center justify-between gap-4 px-5 py-3 lg:px-8">
+              <div className="flex items-center gap-6">
+                <Wordmark />
+                <TopNav />
+              </div>
+              <LanguageSwitcher />
+            </header>
+            <main
+              id="main"
+              className="mx-auto w-full max-w-[1100px] px-5 pb-28 lg:px-8 lg:pb-8"
+            >
+              {children}
+            </main>
+            <footer className="fixed inset-x-0 bottom-[56px] z-30 px-5 pb-2 lg:static lg:px-8 lg:pb-6">
+              <MiniPlayer />
+            </footer>
+            <BottomNav />
+          </PlayerProvider>
         </NextIntlClientProvider>
       </body>
     </html>
