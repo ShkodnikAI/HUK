@@ -52,6 +52,17 @@ export function makeAuthOptions(
   return {
     adapter: PrismaAdapter(db),
     secret: env.AUTH_SECRET,
+    // H-122: OUR screens instead of the built-in ones. The paths are
+    // deliberately NON-localised (Auth.js redirects to fixed paths and
+    // appends its own query params — a redirect chain would lose them);
+    // each page resolves the locale from the NEXT_LOCALE cookie (set by
+    // the language switcher) or Accept-Language, defaulting to en, and
+    // renders the same screen component the [locale] routes use.
+    pages: {
+      signIn: "/signin",
+      verifyRequest: "/check-email",
+      error: "/auth-error",
+    },
     session: {
       // Database sessions: bans and role changes apply immediately.
       strategy: "database",

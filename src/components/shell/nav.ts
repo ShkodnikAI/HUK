@@ -19,7 +19,8 @@ export const NAV_ITEMS: ReadonlyArray<NavItem> = [
   { key: "search", href: "/search", enabled: false },
   // H-121: the playlists screen ships with this naryad.
   { key: "playlists", href: "/playlists", enabled: true },
-  { key: "me", href: "/me", enabled: false },
+    // H-122: the Me tab ships with this naryad.
+  { key: "me", href: "/me", enabled: true },
 ];
 
 /** The items a navigator renders right now. */

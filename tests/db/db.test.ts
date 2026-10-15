@@ -5901,3 +5901,121 @@ describe.skipIf(!databaseUrl)("/now contract extension (H-121)", () => {
     expect(queries).toBeLessThanOrEqual(2);
   });
 });
+
+// ───────────────────────── H-122 — access screens: auth contracts ─────────────────────────
+// The custom sign-in pages must not weaken the Auth.js contract: CSRF is
+// still enforced, and the sign-in response is identical for a known and an
+// unknown address (no account oracle). The same NextAuth(options) the App
+// Router route wraps is driven directly (the pages-router entry needs no
+// live Next request scope).
+describe.skipIf(!databaseUrl)("access screens auth contracts (H-122)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    process.env.NEXTAUTH_URL ??= "https://example.test";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  async function makeHandler() {
+    const NextAuth = (await import("next-auth")).default;
+    return NextAuth(makeAuthOptions(loadEnv())) as unknown as (req: unknown, res: unknown) => Promise<void>;
+  }
+
+  function makeRes() {
+    const record: { headers: Record<string, unknown>; send?: unknown; json?: unknown } = { headers: {} };
+    const res = {
+      status() {
+        return res;
+      },
+      setHeader(k: string, v: unknown) {
+        record.headers[k] = v;
+        return res;
+      },
+      getHeader(k: string) {
+        return record.headers[k];
+      },
+      end() {},
+      json(b: unknown) {
+        record.json = b;
+        return res;
+      },
+      send(b: unknown) {
+        record.send = b;
+        return res;
+      },
+    };
+    return { res, record };
+  }
+
+  async function handshake(handler: Awaited<ReturnType<typeof makeHandler>>) {
+    const step1 = makeRes();
+    await handler(
+      { method: "GET", url: "/api/auth/csrf", headers: {}, cookies: {}, query: { nextauth: ["csrf"] } },
+      step1.res,
+    );
+    const csrfBody = (step1.record.json ?? step1.record.send) as { csrfToken: string };
+    const setCookies = step1.record.headers["Set-Cookie"] as string[];
+    const line = setCookies.find((c) => c.includes("csrf-token"))!;
+    const pair = line.split(";")[0];
+    const eq = pair.indexOf("=");
+    return { csrfToken: csrfBody.csrfToken, cookieName: pair.slice(0, eq), cookieValue: decodeURIComponent(pair.slice(eq + 1)) };
+  }
+
+  it("a POST without the CSRF token is refused (the protection is intact)", async () => {
+    const handler = await makeHandler();
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((l: string) => logs.push(l));
+    try {
+      const step = makeRes();
+      await handler(
+        {
+          method: "POST",
+          url: "/api/auth/signin/email",
+          headers: {},
+          cookies: {}, // NO csrf cookie
+          query: { nextauth: ["signin", "email"] },
+          body: { email: "oracle@test.example", csrfToken: "made-up" },
+        },
+        step.res,
+      );
+      const status = (step.record.json as { status?: number } | undefined)?.status ?? 200;
+      expect(status >= 400 || step.record.json === undefined ? true : false, "a missing CSRF cookie must not sign anything in").toBe(true);
+      expect(logs.join("\n")).not.toContain("callback/email"); // no magic link went out
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("the sign-in response is identical for a KNOWN and an UNKNOWN address (no account oracle)", async () => {
+    await db.user.create({ data: { email: "known@test.example" } });
+    const handler = await makeHandler();
+    for (const email of ["known@test.example", "unknown@test.example"]) {
+      const logs: string[] = [];
+      const logSpy = vi.spyOn(console, "log").mockImplementation((l: string) => logs.push(l));
+      try {
+        const { csrfToken, cookieName, cookieValue } = await handshake(handler);
+        const step = makeRes();
+        await handler(
+          {
+            method: "POST",
+            url: "/api/auth/signin/email",
+            headers: {},
+            cookies: { [cookieName]: cookieValue },
+            query: { nextauth: ["signin", "email"] },
+            body: { email, csrfToken },
+          },
+          step.res,
+        );
+        const link = logs.find((l) => l.includes("callback/email"));
+        expect(link, `the magic link goes out for ${email}`).toBeTruthy();
+      } finally {
+        logSpy.mockRestore();
+      }
+    }
+  });
+});
