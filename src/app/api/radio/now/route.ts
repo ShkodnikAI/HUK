@@ -36,6 +36,10 @@ type SlotRow = {
  * H-112 (D14): DIRECT_URL tracks are served from OUR broadcast cache —
  * /api/audio/<trackId> — so listeners never load the author's host. AUDIUS
  * (D3 open) and SEED (our own file) keep their URLs unchanged.
+ *
+ * H-306: the naive `endsAt` column meets a timestamptz parameter; the
+ * comparison is pinned to the UTC wall clock so the session time zone can
+ * never shift the timeline (see src/server/db-url.ts).
  */
 export async function radioNow(
   nowMs: number,
@@ -57,7 +61,7 @@ export async function radioNow(
       JOIN "Track" t        ON t."id" = s."trackId"
       LEFT JOIN "ArtistProfile" a ON a."id" = t."artistId"
       LEFT JOIN "TrackSource" ts  ON ts."trackId" = t."id"
-     WHERE s."endsAt" > ${now}
+     WHERE s."endsAt" > (${now}::timestamptz AT TIME ZONE 'UTC')
        AND t."status" = 'APPROVED'   -- F3 (H-110, S2): never serve slots
        AND t."available" = true      -- whose track is not public right now
      ORDER BY s."startsAt" ASC

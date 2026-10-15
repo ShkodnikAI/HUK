@@ -49,9 +49,13 @@ type ServableRow = {
 /**
  * One query: the track, its source and whether it sits inside the broadcast
  * window (a slot airing or inside the end grace, or among the next five
- * future slots — the same definition the cache uses).
+ * future slots — the same definition the cache uses). Exported for the
+ * H-306 DB tests (the same pattern as radioNow in /api/radio/now).
+ * H-306: every slot comparison pins the parameter to the UTC wall clock —
+ * a naive column vs timestamptz parameter is resolved through the session
+ * zone otherwise (src/server/db-url.ts).
  */
-async function servableTrack(trackId: string, nowMs: number, client: Pick<PrismaClient, "$queryRaw"> = db): Promise<ServableRow | null> {
+export async function servableTrack(trackId: string, nowMs: number, client: Pick<PrismaClient, "$queryRaw"> = db): Promise<ServableRow | null> {
   const now = new Date(nowMs);
   const graceCutoff = new Date(nowMs - CACHE_GRACE_MS);
   const rows = await client.$queryRaw<ServableRow[]>`
@@ -59,7 +63,7 @@ async function servableTrack(trackId: string, nowMs: number, client: Pick<Prisma
       SELECT s."trackId"
         FROM "BroadcastSlot" s
         JOIN "Track" t2 ON t2."id" = s."trackId" AND t2."status" = 'APPROVED' AND t2."available" = true
-       WHERE s."startsAt" > ${now}
+       WHERE s."startsAt" > (${now}::timestamptz AT TIME ZONE 'UTC')
        ORDER BY s."startsAt" ASC
        LIMIT 5
     )
@@ -67,8 +71,8 @@ async function servableTrack(trackId: string, nowMs: number, client: Pick<Prisma
            ts."provider"::text AS "provider", ts."contentHash" AS "contentHash",
            EXISTS (SELECT 1 FROM "BroadcastSlot" s
                     WHERE s."trackId" = t."id"
-                      AND s."startsAt" <= ${now}
-                      AND s."endsAt" > ${graceCutoff}) AS "onAirOrGrace",
+                      AND s."startsAt" <= (${now}::timestamptz AT TIME ZONE 'UTC')
+                      AND s."endsAt" > (${graceCutoff}::timestamptz AT TIME ZONE 'UTC')) AS "onAirOrGrace",
            EXISTS (SELECT 1 FROM "nextFive" nf WHERE nf."trackId" = t."id") AS "inNextFive"
       FROM "Track" t
       LEFT JOIN "TrackSource" ts ON ts."trackId" = t."id"

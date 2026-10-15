@@ -129,7 +129,7 @@ export function makeMaintenanceJobs(
             SELECT "id", "trackId", date_trunc('day', "createdAt") AS "day",
                    "msListened", "completed", "skippedEarly"
               FROM "ListenEvent"
-             WHERE "createdAt" < ${cutoff}
+             WHERE "createdAt" < (${cutoff}::timestamptz AT TIME ZONE 'UTC') -- H-306: UTC wall clock, session-zone independent
              ORDER BY "createdAt"
              LIMIT ${listenBatchSize}
           ), agg AS (
