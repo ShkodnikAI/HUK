@@ -1,27 +1,98 @@
 @import "tailwindcss";
 
-/* shadcn/ui design tokens (neutral base) — components generated in later naryads
-   rely on these variables. */
+/* H-120 — design tokens (docs/design/screens-v1/TOKENS.md), DARK ONLY.
+   Named by role, not by value; BRAND.md wins over a board on conflict
+   (the wordmark "UK" grey is #7A7B80). No hard-coded brand hex outside
+   this file — tests/ui/tokens.test.ts greps for it. Contrast pairs are
+   verified AA in the H-120 PR. */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --border: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --radius: 0.625rem;
+  color-scheme: dark;
+
+  /* Surfaces */
+  --background: #1a1b1f;
+  --surface: #23242a;
+  --surface-sunken: #1f2025;
+  --surface-raised: #2c2d34;
+  --border: #34353c;
+
+  /* Text */
+  --text: #ecebe6;
+  --text-muted: #a3a4a9;
+
+  /* Brand */
+  --gold: #d4af37;
+  --gold-tint: #3a3217; /* "in review" / "paused" badge background */
+  --wordmark-grey: #7a7b80;
+  --tagline-grey: #8b8c8e;
+
+  /* Status (word + colour, never colour alone) */
+  --success: #7fc8a9;
+  --success-bg: #1f3a30;
+  --danger: #e58b84;
+  --danger-bg: #3b2523;
+
+  /* shadcn compatibility aliases (components from earlier naryads) */
+  --background-alias: var(--background);
+  --foreground: var(--text);
+  --ring: var(--gold);
+  --radius: 12px;
 }
 
 @theme inline {
   --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-sunken: var(--surface-sunken);
+  --color-raised: var(--surface-raised);
   --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--text-muted);
+  --color-gold: var(--gold);
+  --color-gold-tint: var(--gold-tint);
+  --color-wordmark: var(--wordmark-grey);
+  --color-tagline: var(--tagline-grey);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-foreground: var(--foreground);
   --color-ring: var(--ring);
+
+  --font-ui: var(--font-inter); /* Inter 400/500/600 — the interface */
+  --font-display: var(--font-cormorant); /* Cormorant Garamond — wordmark + large titles only */
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: 14px; /* cards */
+  --radius-2xl: 20px; /* hero card */
+  --radius-3xl: 22px; /* pills */
 }
 
 body {
   background: var(--color-background);
-  color: var(--color-foreground);
+  color: var(--color-text);
+}
+
+/* Visible gold focus ring for EVERY interactive element (H-120 task 4). */
+.focus-gold:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Skip link: hidden until focused, then the first element on screen. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 50;
+}
+.skip-link:focus {
+  left: 8px;
+  top: 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--gold);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
 }

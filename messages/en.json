@@ -251,5 +251,27 @@
     "howLegalTitle": "LEGAL",
     "howLegalNote": "The legal pages are written after the legal review. Until then the links on the boards lead here.",
     "howBackToCharts": "Back to charts"
+  },
+  "shell": {
+    "skipToContent": "Skip to content",
+    "bottomNavHint": "Main navigation",
+    "wordmarkFirst": "H",
+    "wordmarkRest": "UK"
+  },
+  "nav": {
+    "radio": "Radio",
+    "charts": "Charts",
+    "search": "Search",
+    "playlists": "Playlists",
+    "me": "Me"
+  },
+  "states": {
+    "notFoundTitle": "This frequency is silent",
+    "notFoundText": "The page you are looking for does not exist or has moved.",
+    "backToRadio": "Back to the radio",
+    "offlineText": "You are offline — the radio will resume when the connection returns.",
+    "quietTitle": "The station is silent",
+    "quietText": "Nothing is on air right now. Check the schedule or come back a little later.",
+    "notFoundCode": "404"
   }
 }
