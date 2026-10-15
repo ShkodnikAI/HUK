@@ -60,13 +60,16 @@ import {
   CACHE_COOLDOWN_MS,
   CACHE_GRACE_MS,
   cacheFileName,
+  broadcastWindow,
   makeAudioCacheState,
   purgeTrackFromCache,
   runAudioCachePass,
   sweepCacheAtStartAsync,
   type AudioCacheSeam,
 } from "@/server/broadcast/audio-cache";
-import { GET as audioGET, HEAD as audioHEAD } from "@/app/api/audio/[trackId]/route";
+import { GET as audioGET, HEAD as audioHEAD, servableTrack } from "@/app/api/audio/[trackId]/route";
+import { effectiveDatabaseTimeZone } from "@/server/db-timezone";
+import { db as appDb } from "@/server/db";
 
 interface MatrixEntry {
     method: string;
@@ -4122,8 +4125,14 @@ describe.skipIf(!databaseUrl)("moderation claim + leadership gate (H-211, G1)", 
     // is fresh…
     expect(await claimModerationTrack(track.id, db)).toBe(false);
     // …and succeeds once the claim is older than the 10-minute TTL (fake
-    // clock: the row is backdated directly).
-    await db.$executeRaw`UPDATE "Track" SET "moderationClaimedAt" = now() - interval '11 minutes' WHERE "id" = ${track.id}`;
+    // clock: the row is backdated via the ORM — the UTC wall clock by
+    // construction, independent of the session zone; a raw
+    // `now() - interval '11 minutes'` would write the SESSION-zone rendering
+    // and shift under the H-306 matrix databases).
+    await db.track.update({
+      where: { id: track.id },
+      data: { moderationClaimedAt: new Date(Date.now() - 11 * 60_000) },
+    });
     expect(await claimModerationTrack(track.id, db)).toBe(true);
     expect(await claimModerationTrack(track.id, db)).toBe(false);
   });
@@ -5255,4 +5264,191 @@ describe.skipIf(!databaseUrl)("broadcast audio cache (H-112, D14)", () => {
     }
     expect(last).toBe(429);
   }, 30_000);
+});
+
+// ───────────────────────── H-306 — database time zone independence ─────────────────────────
+//
+// The CI app job runs this whole file three times: under the service default
+// (UTC) and under database defaults of Europe/Minsk and America/Los_Angeles
+// (tests/db/run-under-timezone.mjs ALTERs the database before each run — the
+// field incident of 2026-10-15 was a Europe/Minsk host database). `db`
+// carries the connection mechanism (options=-c timezone=UTC on the URL);
+// `raw = makeClient()` deliberately does NOT — together the two clients prove
+// both layers: the session mechanism AND the explicit SQL hardening.
+describe.skipIf(!databaseUrl)("database time zone independence (H-306)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    // The mechanism guard builds the app client, whose loadEnv() requires
+    // AUTH_SECRET; in a filtered run (-t) no other describe has set it yet
+    // (the same fixture pattern every other DB describe here uses).
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  /** The UTC wall clock Postgres renders for an instant (`timestamp(3)::text`). */
+  const utcWall = (ms: number): string => new Date(ms).toISOString().replace("T", " ").slice(0, 23);
+
+  /** Reads naive wall-clock text back as the instant it represents (UTC). */
+  const wallAsInstant = (wall: string): number => new Date(`${wall.replace(" ", "T")}Z`).getTime();
+
+  async function seedApprovedTrack(title: string, provider: "SEED" | "DIRECT_URL" = "SEED"): Promise<string> {
+    const track = await db.track.create({ data: { title, status: "APPROVED", available: true, durationSec: 60 } });
+    await db.trackSource.create({
+      data: {
+        trackId: track.id,
+        provider,
+        url: `https://author.example/${encodeURIComponent(title)}.mp3`,
+        contentHash: provider === "DIRECT_URL" ? "a".repeat(64) : null,
+      },
+    });
+    return track.id;
+  }
+
+  it("the app's pooled connections run in UTC even when the database default is not (mechanism guard)", async () => {
+    // appDb = src/server/db.ts — the mechanism-carrying client every pooled
+    // app connection comes from. Red on a non-UTC database the moment the
+    // connection mechanism is removed — the matrix zones make this
+    // meaningful; the UTC run alone cannot (SHOW timezone would answer UTC
+    // with or without the mechanism there).
+    await expect(effectiveDatabaseTimeZone(appDb)).resolves.toBe("UTC");
+  });
+
+  it("ORM schedule writes store the UTC wall clock and round-trip (raw session, no mechanism)", async () => {
+    const raw = makeClient();
+    try {
+      const track = await raw.track.create({ data: { title: "tz-roundtrip", status: "APPROVED", available: true, durationSec: 60 } });
+      const startMs = Date.UTC(2026, 9, 15, 12, 34, 56, 789);
+      await raw.broadcastSlot.create({
+        data: { seq: 1n, trackId: track.id, startsAt: new Date(startMs), endsAt: new Date(startMs + 60_000) },
+      });
+      const rows = await raw.$queryRaw<Array<{ startsAt: string }>>`SELECT "startsAt"::text AS "startsAt" FROM "BroadcastSlot" LIMIT 1`;
+      expect(rows[0].startsAt).toBe("2026-10-15 12:34:56.789");
+      const slot = await raw.broadcastSlot.findFirstOrThrow();
+      expect(slot.startsAt.getTime()).toBe(startMs);
+      expect(slot.endsAt.getTime()).toBe(startMs + 60_000);
+    } finally {
+      await raw.$disconnect();
+    }
+  });
+
+  it("/api/radio/now serves the live timeline through a raw (mechanism-less) session", async () => {
+    const live = await seedApprovedTrack("tz-live");
+    const upcoming = await seedApprovedTrack("tz-upcoming");
+    const nowMs = Date.now();
+    await db.broadcastSlot.createMany({
+      data: [
+        { seq: 1n, trackId: live, startsAt: new Date(nowMs - 10_000), endsAt: new Date(nowMs + 50_000) },
+        { seq: 2n, trackId: upcoming, startsAt: new Date(nowMs + 60_000), endsAt: new Date(nowMs + 120_000) },
+      ],
+    });
+    const raw = makeClient();
+    try {
+      const body = await radioNow(Date.now(), raw);
+      expect(body.current?.track.id).toBe(live);
+      expect(body.next[0]?.track.id).toBe(upcoming);
+    } finally {
+      await raw.$disconnect();
+    }
+  });
+
+  it("/api/radio/now stays silent outside every window through a raw session", async () => {
+    const ended = await seedApprovedTrack("tz-ended");
+    const nowMs = Date.now();
+    await db.broadcastSlot.create({
+      data: { seq: 1n, trackId: ended, startsAt: new Date(nowMs - 600_000), endsAt: new Date(nowMs - 300_000) },
+    });
+    const raw = makeClient();
+    try {
+      const body = await radioNow(Date.now(), raw);
+      expect(body.current).toBeNull();
+      expect(body.next).toEqual([]);
+    } finally {
+      await raw.$disconnect();
+    }
+  });
+
+  it("the audio window (servableTrack) is zone-independent through a raw session", async () => {
+    const liveId = await seedApprovedTrack("tz-audio-live", "DIRECT_URL");
+    const upcomingId = await seedApprovedTrack("tz-audio-upcoming", "DIRECT_URL");
+    const endedId = await seedApprovedTrack("tz-audio-ended", "DIRECT_URL");
+    const nowMs = Date.now();
+    await db.broadcastSlot.createMany({
+      data: [
+        { seq: 1n, trackId: liveId, startsAt: new Date(nowMs - 30_000), endsAt: new Date(nowMs + 30_000) },
+        { seq: 2n, trackId: upcomingId, startsAt: new Date(nowMs + 60_000), endsAt: new Date(nowMs + 120_000) },
+        { seq: 3n, trackId: endedId, startsAt: new Date(nowMs - 600_000), endsAt: new Date(nowMs - 300_000) },
+      ],
+    });
+    const raw = makeClient();
+    try {
+      const live = await servableTrack(liveId, Date.now(), raw);
+      expect(live?.onAirOrGrace).toBe(true);
+      expect(live?.inNextFive).toBe(false);
+      const upcoming = await servableTrack(upcomingId, Date.now(), raw);
+      expect(upcoming?.onAirOrGrace).toBe(false);
+      expect(upcoming?.inNextFive).toBe(true);
+      const ended = await servableTrack(endedId, Date.now(), raw);
+      expect(ended?.onAirOrGrace).toBe(false);
+      expect(ended?.inNextFive).toBe(false);
+    } finally {
+      await raw.$disconnect();
+    }
+  });
+
+  it("the broadcast cache window is zone-independent through a raw session", async () => {
+    const liveId = await seedApprovedTrack("tz-cache-live", "DIRECT_URL");
+    const upcomingId = await seedApprovedTrack("tz-cache-upcoming", "DIRECT_URL");
+    const nowMs = Date.now();
+    await db.broadcastSlot.createMany({
+      data: [
+        { seq: 1n, trackId: liveId, startsAt: new Date(nowMs - 30_000), endsAt: new Date(nowMs + 30_000) },
+        { seq: 2n, trackId: upcomingId, startsAt: new Date(nowMs + 60_000), endsAt: new Date(nowMs + 120_000) },
+      ],
+    });
+    const raw = makeClient();
+    try {
+      const win = await broadcastWindow(Date.now(), raw);
+      expect(win.onAir).toContain(liveId);
+      expect(win.upcoming).toContain(upcomingId);
+    } finally {
+      await raw.$disconnect();
+    }
+  });
+
+  it("a moderation claim is written as the UTC wall clock and expires after 10 minutes (raw session)", async () => {
+    const track = await db.track.create({ data: { title: "tz-claim", status: "PENDING", durationSec: 60 } });
+    const raw = makeClient();
+    try {
+      expect(await claimModerationTrack(track.id, raw)).toBe(true);
+      // A fresh claim is never re-takeable…
+      expect(await claimModerationTrack(track.id, raw)).toBe(false);
+      // …and it was written as the UTC wall clock — the pre-H-306 SQL stored
+      // the session-zone rendering of now() (+3h under the Minsk database).
+      const rows = await raw.$queryRaw<Array<{ claimed: string }>>`SELECT "moderationClaimedAt"::text AS claimed FROM "Track" WHERE "id" = ${track.id}`;
+      expect(Math.abs(wallAsInstant(rows[0].claimed) - Date.now())).toBeLessThan(60_000);
+      // The worker died without releasing: once the claim is 11 minutes old
+      // (backdated via the ORM — UTC wall clock by construction) it expires.
+      await raw.track.update({
+        where: { id: track.id },
+        data: { moderationClaimedAt: new Date(Date.now() - 11 * 60_000) },
+      });
+      expect(await claimModerationTrack(track.id, raw)).toBe(true);
+      expect(await claimModerationTrack(track.id, raw)).toBe(false);
+    } finally {
+      await raw.$disconnect();
+    }
+  });
+
+  it("the rate-limit bucket window is stored as the UTC wall clock (raw session)", async () => {
+    const raw = makeClient();
+    try {
+      const verdict = await rateLimit({ key: "tz-bucket", limit: 10, windowSec: 60, client: raw });
+      expect(verdict.ok).toBe(true);
+      const rows = await raw.$queryRaw<Array<{ windowStart: string }>>`SELECT "windowStart"::text AS "windowStart" FROM "RateLimitBucket" WHERE "key" = 'tz-bucket'`;
+      expect(Math.abs(wallAsInstant(rows[0].windowStart) - Date.now())).toBeLessThan(60_000);
+    } finally {
+      await raw.$disconnect();
+    }
+  });
 });

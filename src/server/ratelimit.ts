@@ -41,7 +41,7 @@ export async function rateLimit(opts: {
 
   const rows = await client.$queryRaw<{ count: number }[]>`
     INSERT INTO "RateLimitBucket" ("key", "windowStart", "count")
-    VALUES (${opts.key}, ${start}, 1)
+    VALUES (${opts.key}, (${start}::timestamptz AT TIME ZONE 'UTC'), 1) -- H-306: store the UTC wall clock, session-zone independent
     ON CONFLICT ("key", "windowStart")
       DO UPDATE SET "count" = "RateLimitBucket"."count" + 1
     RETURNING "count"

@@ -359,10 +359,14 @@ export type PassSummary = {
  * the pass finishes with the track.
  */
 export async function claimModerationTrack(trackId: string, client: typeof defaultDb = defaultDb): Promise<boolean> {
+  // H-306: `moderationClaimedAt` is a naive timestamp column storing UTC wall
+  // clock; `now()` is timestamptz and its cast/conversion runs through the
+  // session zone — pin both sides to the UTC wall clock explicitly.
   const rows = await client.$queryRaw<Array<{ id: string }>>`
-    UPDATE "Track" SET "moderationClaimedAt" = now()
+    UPDATE "Track" SET "moderationClaimedAt" = (now() AT TIME ZONE 'UTC')
     WHERE "id" = ${trackId} AND "status" = 'PENDING'
-      AND ("moderationClaimedAt" IS NULL OR "moderationClaimedAt" < now() - interval '10 minutes')
+      AND ("moderationClaimedAt" IS NULL
+           OR "moderationClaimedAt" < ((now() - interval '10 minutes') AT TIME ZONE 'UTC'))
     RETURNING "id"
   `;
   return rows.length === 1;

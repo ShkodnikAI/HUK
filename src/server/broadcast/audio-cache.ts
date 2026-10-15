@@ -177,12 +177,15 @@ export async function broadcastWindow(
   client: Pick<PrismaClient, "$queryRaw"> = defaultDb,
 ): Promise<CacheWindow & { slots: Array<{ trackId: string; startsAt: number; endsAt: number }> }> {
   const graceCutoff = new Date(nowMs - CACHE_GRACE_MS);
+  // H-306: the naive `endsAt` column meets a timestamptz parameter — the
+  // comparison is pinned to the UTC wall clock so the session zone cannot
+  // shift the window (see src/server/db-url.ts).
   const rows = await client.$queryRaw<WindowRow[]>`
     SELECT s."trackId", s."startsAt", s."endsAt"
       FROM "BroadcastSlot" s
       JOIN "Track" t ON t."id" = s."trackId" AND t."status" = 'APPROVED' AND t."available" = true
       JOIN "TrackSource" ts ON ts."trackId" = t."id" AND ts."provider" = 'DIRECT_URL'
-     WHERE s."endsAt" > ${graceCutoff}
+     WHERE s."endsAt" > (${graceCutoff}::timestamptz AT TIME ZONE 'UTC')
      ORDER BY s."startsAt" ASC
   `;
   const slots = rows.map((r) => ({ trackId: r.trackId, startsAt: r.startsAt.getTime(), endsAt: r.endsAt.getTime() }));
