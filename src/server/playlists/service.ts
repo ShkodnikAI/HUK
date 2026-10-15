@@ -17,6 +17,10 @@ export const MAX_PLAYLISTS_PER_USER = 50;
 export const MAX_TRACKS_PER_PLAYLIST = 500;
 export const MAX_IMPORT_IDS = 500;
 
+/** H-307: per-user HTTP rate limits (enforced at the routes: 429 + Retry-After). */
+export const PLAYLIST_CREATE_LIMIT = { limit: 10, windowSec: 3600 } as const;
+export const PLAYLIST_ADD_ITEM_LIMIT = { limit: 60, windowSec: 3600 } as const;
+
 export type PlaylistVisibility = "PRIVATE" | "UNLISTED" | "PUBLIC";
 
 export type PlaylistSeam = {

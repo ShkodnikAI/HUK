@@ -98,6 +98,21 @@ export async function startListenSession(
     },
     select: { id: true },
   });
+
+  // H-307: concurrent open sessions per actor are capped — the oldest
+  // sessions beyond the cap are closed as lapsed (they write their
+  // ListenEvent with skippedEarly=false, like a vanished beat loop).
+  const open = await client.listenSession.findMany({
+    where: identity.userId ? { userId: identity.userId, closedAt: null } : { anonHash, closedAt: null },
+    orderBy: { startedAt: "asc" },
+    select: { id: true },
+  });
+  if (open.length > MAX_OPEN_SESSIONS_PER_ACTOR) {
+    for (const stale of open.slice(0, open.length - MAX_OPEN_SESSIONS_PER_ACTOR)) {
+      await closeSession(stale.id, { skipped: false, now: now(), client });
+    }
+  }
+
   return { sessionId: session.id };
 }
 
@@ -122,6 +137,9 @@ export const MAX_CREDIT_MS = 15_000;
 export const LAPSE_MS = 60_000;
 /** ARCHITECTURE §9: the reaction gate. */
 export const VERIFIED_FOR_REACTION_MS = 30_000;
+/** H-307: at most this many CONCURRENT open sessions per actor; starting a
+ *  further one closes the oldest as lapsed (skipped=false, no penalty). */
+export const MAX_OPEN_SESSIONS_PER_ACTOR = 3;
 
 /**
  * Credits one beat. Fail closed: a session that does not belong to the
@@ -205,29 +223,38 @@ export async function beat(input: BeatInput, identity: ListenIdentity, seam: Bea
 }
 
 /**
- * Closes a session and writes exactly ONE ListenEvent (idempotent: an
- * already-closed session is left untouched).
+ * Closes a session and writes exactly ONE ListenEvent — ATOMICALLY
+ * (H-307): the conditional `updateMany` (closedAt IS NULL) is the lock —
+ * exactly one concurrent caller sees count=1 and only that caller writes
+ * the event inside the same transaction. An already-closed session is left
+ * untouched.
  */
 export async function closeSession(
   sessionId: string,
   opts: { skipped: boolean; now: Date; client: typeof defaultDb },
 ): Promise<void> {
   const { client } = opts;
-  const session = await client.listenSession.findUnique({ where: { id: sessionId } });
-  if (!session || session.closedAt) return;
-  const event = client.listenEvent.create({
-    data: {
-      userId: session.userId,
-      anonHash: session.anonHash,
-      trackId: session.trackId,
-      mode: session.mode,
-      msListened: session.verifiedMs,
-      completed: session.completed,
-      skippedEarly: opts.skipped && session.verifiedMs < VERIFIED_FOR_REACTION_MS,
-      createdAt: opts.now,
-    },
+  await client.$transaction(async (tx) => {
+    const closed = await tx.listenSession.updateMany({
+      where: { id: sessionId, closedAt: null },
+      data: { closedAt: opts.now },
+    });
+    if (closed.count !== 1) return; // already closed (or gone) — no event
+    const session = await tx.listenSession.findUnique({ where: { id: sessionId } });
+    if (!session) return; // raced away — the update count above cannot be 1 in that case
+    await tx.listenEvent.create({
+      data: {
+        userId: session.userId,
+        anonHash: session.anonHash,
+        trackId: session.trackId,
+        mode: session.mode,
+        msListened: session.verifiedMs,
+        completed: session.completed,
+        skippedEarly: opts.skipped && session.verifiedMs < VERIFIED_FOR_REACTION_MS,
+        createdAt: opts.now,
+      },
+    });
   });
-  await client.$transaction([event, client.listenSession.update({ where: { id: session.id }, data: { closedAt: opts.now } })]);
 }
 
 /**

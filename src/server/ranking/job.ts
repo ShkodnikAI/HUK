@@ -1,18 +1,28 @@
-// The ranking job (H-304, extended by H-305): leader-gated (the
-// maintenance runner gates it), bounded (a batch of tracks per run),
-// idempotent (recomputing the same events yields the same row). Recomputes
-// TrackScore from likes, dislikes, playlist adds and verified listen
-// events; writes ONLY APPROVED, available tracks. H-305: the score is
-// written for every chart category the track belongs to (all, lang:<code>,
-// style:<slug>, direction:<slug>, instrumental, lang+style combos) and
-// rows for categories the track left are deleted; a daily reconcile job
-// recomputes tracks whose category set no longer matches their confirmed
-// terms (moderator SET_TERMS). The weekly chart snapshot rides the same
-// gated runner (src/server/charts/service.ts).
+// The ranking job (H-304, extended by H-305, integrity rules H-307):
+// leader-gated (the maintenance runner gates it), bounded (a batch of
+// tracks per run), idempotent (recomputing the same events yields the same
+// row). Recomputes TrackScore from likes, dislikes, playlist adds and
+// verified listen events; writes ONLY APPROVED, available tracks. H-305:
+// the score is written for every chart category the track belongs to
+// (all, lang:<code>, style:<slug>, direction:<slug>, instrumental,
+// lang+style combos) and rows for categories the track left are deleted; a
+// daily reconcile job recomputes tracks whose category set no longer
+// matches their confirmed terms (moderator SET_TERMS). The weekly chart
+// snapshot rides the same gated runner (src/server/charts/service.ts).
+//
+// H-307 (ranking integrity):
+// - anonymous listeners contribute NO EARLY_SKIP_PLAYLIST; a signed-in
+//   actor contributes at most one per track per UTC day, weighted by the
+//   actor's reputation (not a constant 1.0);
+// - PLAYLIST_ADD counts at most once per owner per track (the earliest
+//   add wins), weighted by the owner's reputation;
+// - per-actor completion counters replace the O(n^2) startsWith scan;
+// - the combined event list is sorted by (createdAt, id) before summation,
+//   so the result never depends on the database read order.
 
 import { PrismaClient } from "@prisma/client";
 import { db as defaultDb } from "@/server/db";
-import { scoreTrack, type RankedEvent } from "./signals";
+import { scoreTrack, type RankedEvent, type SignalType } from "./signals";
 import { runAntifraudPass, updateReputations } from "./antifraud";
 import { categoryKeysForTrack } from "@/server/charts/categories";
 import { ensureWeeklySnapshots } from "@/server/charts/service";
@@ -23,6 +33,139 @@ const BATCH_TRACKS = 200;
 function completionDedupKey(userId: string | null, anonHash: string | null, createdAt: Date): string {
   const actor = userId ?? `anon:${anonHash ?? "unknown"}`;
   return `${actor}:${createdAt.toISOString().slice(0, 10)}`;
+}
+
+type WeightedEvent = RankedEvent & { _atMs: number; _id: string };
+
+/**
+ * Assembles the ranked events of one track with the H-307 integrity rules
+ * applied. Exported for the DB contracts: every dedupe rule is observable
+ * here directly (the score itself hides the events behind a bound).
+ */
+export async function collectRankedEvents(
+  trackId: string,
+  nowMs: number,
+  client: PrismaClient,
+): Promise<RankedEvent[]> {
+  const [reactions, playlistAdds, listens, flags] = await Promise.all([
+    client.reaction.findMany({
+      where: { trackId },
+      select: { userId: true, type: true, createdAt: true, user: { select: { reputation: true } } },
+    }),
+    client.playlistItem.findMany({
+      where: { trackId, playlist: { visibility: { not: "PRIVATE" } } },
+      select: { playlistId: true, addedAt: true, playlist: { select: { ownerId: true, owner: { select: { reputation: true } } } } },
+    }),
+    client.listenEvent.findMany({
+      where: { trackId },
+      select: {
+        id: true, userId: true, anonHash: true, completed: true, skippedEarly: true,
+        mode: true, createdAt: true,
+      },
+      // (createdAt, id): ties broken deterministically, so "the first early
+      // skip of a UTC day" and the event order never depend on read order.
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    }),
+    client.voteFlag.findMany({ where: { trackId }, select: { userId: true, reason: true } }),
+  ]);
+
+  // ListenEvent carries only the userId scalar — reputations come from one
+  // grouped lookup (the event weight needs the actor's reputation, H-307).
+  const listenUserIds = [...new Set(listens.map((l) => l.userId).filter((v): v is string => v !== null))];
+  const reputationByUser = new Map<string, number>(
+    listenUserIds.length
+      ? (await client.user.findMany({ where: { id: { in: listenUserIds } }, select: { id: true, reputation: true } })).map((u) => [u.id, u.reputation])
+      : [],
+  );
+
+  const flaggedPairs = new Set(flags.map((f) => `${f.userId}:${f.reason}`));
+  const weighted: WeightedEvent[] = [];
+
+  for (const reaction of reactions) {
+    weighted.push({
+      type: reaction.type,
+      reputation: reaction.user.reputation,
+      ageMs: Math.max(0, nowMs - reaction.createdAt.getTime()),
+      actorId: reaction.userId,
+      flagged: flaggedPairs.has(`${reaction.userId}:vote-burst`) || flaggedPairs.has(`${reaction.userId}:ip-cluster`),
+      _atMs: reaction.createdAt.getTime(),
+      _id: reaction.userId, // unique per track (one vote per user/track)
+    });
+  }
+
+  // H-307: at most one PLAYLIST_ADD per owner per track — the earliest add
+  // (addedAt, playlistId — the composite key is the deterministic tie-break)
+  // wins; the weight carries the owner's reputation.
+  const firstAddByOwner = new Map<string, (typeof playlistAdds)[number]>();
+  for (const add of playlistAdds) {
+    const existing = firstAddByOwner.get(add.playlist.ownerId);
+    if (
+      !existing ||
+      add.addedAt.getTime() < existing.addedAt.getTime() ||
+      (add.addedAt.getTime() === existing.addedAt.getTime() && add.playlistId < existing.playlistId)
+    ) {
+      firstAddByOwner.set(add.playlist.ownerId, add);
+    }
+  }
+  for (const add of firstAddByOwner.values()) {
+    weighted.push({
+      type: "PLAYLIST_ADD",
+      reputation: add.playlist.owner.reputation,
+      ageMs: Math.max(0, nowMs - add.addedAt.getTime()),
+      actorId: add.playlist.ownerId,
+      _atMs: add.addedAt.getTime(),
+      _id: add.playlistId,
+    });
+  }
+
+  // Completions: once per user per UTC day; a completion on ANOTHER day is
+  // a repeat completion. Anonymous completions count with default trust.
+  // H-307: per-actor counters instead of an O(n^2) startsWith scan.
+  const seenCompletions = new Set<string>();
+  const completionCount = new Map<string, number>();
+  // H-307: anonymous identities contribute NO negative signal; a signed-in
+  // actor contributes at most one EARLY_SKIP_PLAYLIST per track per UTC day.
+  const seenAnonSkips = new Set<string>();
+  for (const listen of listens) {
+    const actor = listen.userId ?? `anon:${listen.anonHash ?? "unknown"}`;
+    if (listen.completed) {
+      const key = completionDedupKey(listen.userId, listen.anonHash, listen.createdAt);
+      if (!seenCompletions.has(key)) {
+        seenCompletions.add(key);
+        const prior = completionCount.get(actor) ?? 0;
+        completionCount.set(actor, prior + 1);
+        const type: SignalType = prior >= 1 ? "REPEAT_COMPLETION" : "COMPLETION";
+        weighted.push({
+          type,
+          reputation: 1.0,
+          ageMs: Math.max(0, nowMs - listen.createdAt.getTime()),
+          actorId: actor,
+          _atMs: listen.createdAt.getTime(),
+          _id: listen.id,
+        });
+      }
+    } else if (listen.skippedEarly && listen.mode === "PLAYLIST") {
+      if (!listen.userId) continue; // anonymous: no negative signal (H-307)
+      const day = listen.createdAt.toISOString().slice(0, 10);
+      const key = `${listen.userId}:${day}`;
+      if (seenAnonSkips.has(key)) continue; // at most one per actor per UTC day
+      seenAnonSkips.add(key);
+      weighted.push({
+        type: "EARLY_SKIP_PLAYLIST",
+        reputation: listen.userId !== null ? reputationByUser.get(listen.userId) ?? 1.0 : 1.0,
+        ageMs: Math.max(0, nowMs - listen.createdAt.getTime()),
+        actorId: listen.userId,
+        _atMs: listen.createdAt.getTime(),
+        _id: listen.id,
+      });
+    }
+  }
+
+  // Canonical order (createdAt, id): the summation never depends on the
+  // order the four queries happened to return (scoreTrack additionally
+  // canonicalises internally — bit-identical under any input shuffle).
+  weighted.sort((a, b) => a._atMs - b._atMs || (a._id < b._id ? -1 : a._id > b._id ? 1 : 0));
+  return weighted.map(({ _atMs: _a, _id: _b, ...event }) => event);
 }
 
 export async function recomputeTrackScores(
@@ -63,76 +206,7 @@ export async function recomputeTrackScores(
       instrumental: shape.instrumental,
       terms: termsByTrack.get(trackId) ?? [],
     });
-    const [reactions, playlistAdds, listens, flags] = await Promise.all([
-      client.reaction.findMany({
-        where: { trackId },
-        select: { userId: true, type: true, createdAt: true, user: { select: { reputation: true } } },
-      }),
-      client.playlistItem.findMany({
-        where: { trackId, playlist: { visibility: { not: "PRIVATE" } } },
-        select: { addedAt: true, playlist: { select: { ownerId: true } } },
-      }),
-      client.listenEvent.findMany({
-        where: { trackId },
-        select: { userId: true, anonHash: true, completed: true, skippedEarly: true, mode: true, createdAt: true },
-        orderBy: { createdAt: "asc" },
-      }),
-      client.voteFlag.findMany({ where: { trackId }, select: { userId: true, reason: true } }),
-    ]);
-
-    const flaggedPairs = new Set(flags.map((f) => `${f.userId}:${f.reason}`));
-    const events: RankedEvent[] = [];
-
-    for (const reaction of reactions) {
-      events.push({
-        type: reaction.type,
-        reputation: reaction.user.reputation,
-        ageMs: Math.max(0, nowMs - reaction.createdAt.getTime()),
-        actorId: reaction.userId,
-        flagged: flaggedPairs.has(`${reaction.userId}:vote-burst`) || flaggedPairs.has(`${reaction.userId}:ip-cluster`),
-      });
-    }
-
-    for (const add of playlistAdds) {
-      events.push({
-        type: "PLAYLIST_ADD",
-        reputation: 1.0, // playlist adds carry the default trust; anti-fraud flags cover votes only
-        ageMs: Math.max(0, nowMs - add.addedAt.getTime()),
-        actorId: add.playlist.ownerId,
-      });
-    }
-
-    // Completions: once per user per UTC day; a completion on ANOTHER day
-    // is a repeat completion. Anonymous events count with default trust.
-    const seenCompletions = new Set<string>();
-    const completionDays = new Map<string, Set<string>>();
-    for (const listen of listens) {
-      const actor = listen.userId ?? `anon:${listen.anonHash ?? "unknown"}`;
-      if (listen.completed) {
-        const key = completionDedupKey(listen.userId, listen.anonHash, listen.createdAt);
-        const days = completionDays.get(actor) ?? new Set<string>();
-        const isRepeat = days.has("*") && !seenCompletions.has(key);
-        if (!seenCompletions.has(key)) {
-          seenCompletions.add(key);
-          days.add("*");
-          completionDays.set(actor, days);
-          const priorCompletions = [...seenCompletions].filter((k) => k.startsWith(actor)).length;
-          events.push({
-            type: priorCompletions > 1 ? "REPEAT_COMPLETION" : "COMPLETION",
-            reputation: 1.0,
-            ageMs: Math.max(0, nowMs - listen.createdAt.getTime()),
-            actorId: actor,
-          });
-        }
-      } else if (listen.skippedEarly && listen.mode === "PLAYLIST") {
-        events.push({
-          type: "EARLY_SKIP_PLAYLIST",
-          reputation: 1.0,
-          ageMs: Math.max(0, nowMs - listen.createdAt.getTime()),
-          actorId: actor,
-        });
-      }
-    }
+    const events = await collectRankedEvents(trackId, nowMs, client);
     const result = scoreTrack(events);
     for (const categoryKey of categoryKeys) {
       await client.trackScore.upsert({

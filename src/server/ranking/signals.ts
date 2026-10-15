@@ -86,13 +86,27 @@ export type TrackScoreResult = {
  * Scores one track from its (already deduplicated) events:
  * P = Σ positive weights, N = P + Σ |negative| (weighted pseudo-counts),
  * score = Wilson lower bound, 0 below MIN_VOTERS distinct voters.
- * Deterministic: identical events give an identical result.
+ *
+ * Deterministic AND order-insensitive (H-307): the events are summed in a
+ * canonical order (age, type, reputation, actor), so shuffling the input
+ * yields a bit-identical score — float summation is not associative, the
+ * canonical order removes the read-order dependence entirely. Events that
+ * tie on every field carry identical weights, so their relative order
+ * cannot change the sequence of addends.
  */
 export function scoreTrack(events: readonly RankedEvent[]): TrackScoreResult {
+  const ordered = [...events].sort(
+    (a, b) =>
+      a.ageMs - b.ageMs ||
+      (a.type < b.type ? -1 : a.type > b.type ? 1 : 0) ||
+      a.reputation - b.reputation ||
+      (a.actorId < b.actorId ? -1 : a.actorId > b.actorId ? 1 : 0) ||
+      (a.flagged === b.flagged ? 0 : a.flagged ? 1 : -1),
+  );
   let positives = 0;
   let negatives = 0;
   const voters = new Set<string>();
-  for (const event of events) {
+  for (const event of ordered) {
     if (event.flagged) continue; // anti-fraud: weight 0, not a voter either
     const weight = eventWeight(event.type, event.reputation, event.ageMs);
     if (weight >= 0) positives += weight;
