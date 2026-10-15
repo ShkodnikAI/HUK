@@ -78,7 +78,7 @@ export function PlaylistsView() {
     setError(code ?? "generic");
   }, [name, reload]);
 
-  const rename = useCallback(
+  const renamePlaylist = useCallback(
     async (id: string, nextName: string): Promise<void> => {
       setError(null);
       const res = await fetch(`/api/playlists/${encodeURIComponent(id)}`, {
@@ -257,7 +257,7 @@ export function PlaylistsView() {
                   variant="ghost"
                   onClick={() => {
                     const next = window.prompt(t("renamePrompt"), p.name);
-                    if (next && next !== p.name) void rename(p.id, next);
+                    if (next && next !== p.name) void renamePlaylist(p.id, next);
                   }}
                 >
                   {t("rename")}
