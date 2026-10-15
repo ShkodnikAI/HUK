@@ -136,7 +136,10 @@ async function serve(req: Request, rawTrackId: string | undefined, headOnly: boo
   const baseHeaders: Record<string, string> = {
     "accept-ranges": "bytes",
     etag: `"${row.contentHash}"`,
-    "cache-control": "private, max-age=300, no-transform",
+    // H-309 (W3 finding H7): a taken-down track must not replay from any
+    // cache — no-store on every audio response; ETag and Range support stay
+    // (conditional requests are revalidated against the origin every time).
+    "cache-control": "no-store",
     "x-content-type-options": "nosniff",
   };
 

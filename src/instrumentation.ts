@@ -11,48 +11,29 @@
 // validate, and a failure there would be the wrong signal (S8 is a boot-time,
 // runtime contract). Next.js sets NEXT_PHASE=phase-production-build for the
 // duration of the build; the guard below turns register() into a no-op then.
+//
+// H-309: this file is analysed (and compiled) for BOTH runtimes, so every
+// Node.js API in it made `next dev` print "A Node.js API is used
+// (process.exit) ... not supported in the Edge Runtime" — a compile-time
+// property of the module graph that NO runtime guard can silence. The whole
+// Node.js boot contract therefore lives in src/server/boot.ts and is
+// dynamically imported here only AFTER the runtime guard — instrumentation.ts
+// itself stays free of Node APIs, and the boot contract (S8 + the H-306
+// database time-zone check) still runs in every Node server process.
 
 export async function register(): Promise<void> {
   // The ONLY direct read of the process environment permitted outside
   // src/server/env.ts (enforced by scripts/ci/check-no-process-env.mjs and
   // by the AST-level no-restricted-syntax selectors in eslint.config.mjs).
-  // Purpose: skip env validation at build time; `next start` and `next dev`
-  // never set phase-production-build, so validation always runs in a server
+  // Purpose: skip the boot contract at build time and in non-Node runtimes;
+  // `next start` and `next dev` never set phase-production-build and run
+  // with NEXT_RUNTIME=nodejs, so the contract always runs in a server
   // process. The marker H-107-EXCEPTION must stay on the same line as the
   // guarded read — the CI guard counts marked occurrences and keeps the
   // exception single.
-  // eslint-disable-next-line no-restricted-syntax -- the single documented S8 exception (H-107, H-109)
-  if (process.env.NEXT_PHASE === "phase-production-build") return; // H-107-EXCEPTION
+  // eslint-disable-next-line no-restricted-syntax -- the single documented S8 exception (H-107, H-109, H-309)
+  if (process.env.NEXT_PHASE === "phase-production-build" || process.env.NEXT_RUNTIME !== "nodejs") return; // H-107-EXCEPTION
 
-  const { loadEnv } = await import("@/server/env");
-  try {
-    loadEnv();
-  } catch (error) {
-    // Fail loud (S9): Next.js demotes an instrumentation rejection to an
-    // unhandledRejection and keeps the process alive — every request degrades
-    // to a 500. A broken environment must stop the boot instead (S8): print
-    // the validation error and exit non-zero.
-    console.error(error instanceof Error ? error.message : error);
-    process.exit(1);
-  }
-
-  // H-306 (S9): after the env contract, verify the database time-zone
-  // contract — the effective session zone must be UTC (the mechanism in
-  // src/server/db-url.ts pins it on every pooled connection). A wrong zone
-  // used to produce a silent station on non-UTC databases; refuse to start.
-  const { verifyDatabaseTimeZone, DatabaseTimeZoneError } = await import("@/server/db-timezone");
-  try {
-    await verifyDatabaseTimeZone();
-  } catch (error) {
-    if (error instanceof DatabaseTimeZoneError) {
-      console.error(error.message);
-      process.exit(1);
-    }
-    // A briefly unreachable database is not the time-zone contract: routes
-    // fail closed per request and /api/health reports the outage. Log and
-    // keep booting.
-    console.error(
-      `[boot] database time-zone check could not run: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  const { boot } = await import("@/server/boot");
+  await boot();
 }

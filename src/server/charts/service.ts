@@ -12,7 +12,7 @@
 // makes re-running idempotent; a stored snapshot is never rewritten, so
 // the archive stays unchanged after scores move (done criteria).
 
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 import { db as defaultDb } from "@/server/db";
 import { MIN_VOTERS } from "@/server/ranking/signals";
 import { parseCategoryKey, publishedCategories } from "./categories";
@@ -64,12 +64,24 @@ export async function chartTop(
   });
   if (rows.length === 0) return [];
 
-  const likeRows = await client.reaction.groupBy({
-    by: ["trackId"],
-    where: { trackId: { in: rows.map((r) => r.trackId) }, type: "LIKE" },
-    _count: { _all: true },
-  });
-  const likes = new Map(likeRows.map((r) => [r.trackId, r._count._all]));
+  // H-309 (W3 finding H6): the PUBLIC like count excludes likes of flagged
+  // voters — the same definition the ranking applies (VoteFlag on the same
+  // (user, track) with reason 'vote-burst' or 'ip-cluster' → the like does
+  // not count and the voter is not advertised). One grouped statement.
+  const likeRows = await client.$queryRaw<Array<{ trackId: string; n: bigint }>>`
+    SELECT r."trackId", COUNT(*)::bigint AS n
+      FROM "Reaction" r
+     WHERE r."type" = 'LIKE'
+       AND r."trackId" IN (${Prisma.join(rows.map((r) => r.trackId))})
+       AND NOT EXISTS (
+         SELECT 1 FROM "VoteFlag" f
+          WHERE f."userId" = r."userId"
+            AND f."trackId" = r."trackId"
+            AND f."reason" IN ('vote-burst', 'ip-cluster')
+       )
+     GROUP BY r."trackId"
+  `;
+  const likes = new Map(likeRows.map((r) => [r.trackId, Number(r.n)]));
 
   return rows.map((row, index) => ({
     rank: index + 1,

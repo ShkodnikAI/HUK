@@ -5202,18 +5202,21 @@ describe.skipIf(!databaseUrl)("broadcast audio cache (H-112, D14)", () => {
     expect(full.headers.get("accept-ranges")).toBe("bytes");
     expect(full.headers.get("etag")).toBe(`"${HASH_A}"`);
     expect(full.headers.get("content-type")).toBe("audio/mpeg"); // sniffed from the bytes
-    expect(full.headers.get("cache-control")).toBe("private, max-age=300, no-transform");
+    expect(full.headers.get("cache-control")).toBe("no-store"); // H-309 (H7): a takedown must not replay from any cache
     expect(full.headers.get("x-content-type-options")).toBe("nosniff");
     expect(Number(full.headers.get("content-length"))).toBe(size);
     expect(Buffer.from(new Uint8Array(await full.arrayBuffer())).equals(Buffer.from(BODY_A))).toBe(true);
 
     const head = await audioHEAD(audioReq(id), ctxFor(id));
     expect(head.status).toBe(200);
+    expect(head.headers.get("cache-control")).toBe("no-store"); // H-309: HEAD carries it too
     expect(Number(head.headers.get("content-length"))).toBe(size);
     expect(await head.text()).toBe("");
 
     const mid = await audioGET(audioReq(id, { headers: { range: "bytes=100-199" } }), ctxFor(id));
     expect(mid.status).toBe(206);
+    expect(mid.headers.get("cache-control")).toBe("no-store"); // H-309: 206 carries it too, Range support intact
+    expect(mid.headers.get("accept-ranges")).toBe("bytes");
     expect(mid.headers.get("content-range")).toBe(`bytes 100-199/${size}`);
     expect(mid.headers.get("content-length")).toBe("100");
     expect(Buffer.from(new Uint8Array(await mid.arrayBuffer())).equals(BODY_A.subarray(100, 200))).toBe(true);
@@ -5809,5 +5812,48 @@ describe.skipIf(!databaseUrl)("account erasure completeness (H-308)", () => {
     expect(doc.voteFlags[0].trackId).toBe(track.id);
     expect(doc.voteFlags[0].reason).toBe("ip-cluster");
     expect(doc.reports[0].reporterContact).toBe("me@example.com");
+  });
+});
+
+// ───────────────────────── H-309 — public like integrity (charts) ─────────────────────────
+// The public like count must not advertise the likes of flagged voters —
+// the same definition the ranking applies (VoteFlag on the same (user,
+// track) with reason 'vote-burst' or 'ip-cluster' → weight 0, not a voter).
+describe.skipIf(!databaseUrl)("public like integrity (H-309)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    await cleanTables(db);
+  });
+
+  it("a flagged voter's like is not in the public count; an unflagged one is (H-309 task 1)", async () => {
+    const track = await db.track.create({ data: { title: "chart-likes", status: "APPROVED", available: true } });
+    // chartTop reads the TrackScore row directly (voters >= MIN_VOTERS gate).
+    await db.trackScore.create({ data: { trackId: track.id, categoryKey: "all", score: 0.5, nEff: 20, voters: 11 } });
+    const flagged = await db.user.create({ data: { email: `flagged-${Date.now()}@test.example` } });
+    const honest = await db.user.create({ data: { email: `honest-${Date.now()}@test.example` } });
+    const innocent = await db.user.create({ data: { email: `innocent-${Date.now()}@test.example` } });
+    await db.reaction.create({ data: { userId: flagged.id, trackId: track.id, type: "LIKE", ipHash: null } });
+    await db.reaction.create({ data: { userId: honest.id, trackId: track.id, type: "LIKE", ipHash: null } });
+    // The flagged voter is flagged on THIS track (the ranking definition is
+    // per (user, track)).
+    await db.voteFlag.create({ data: { userId: flagged.id, trackId: track.id, reason: "vote-burst" } });
+    // A flag on a DIFFERENT track of the same voter must NOT hide this like.
+    const otherTrack = await db.track.create({ data: { title: "other", status: "APPROVED", available: true } });
+    await db.voteFlag.create({ data: { userId: innocent.id, trackId: otherTrack.id, reason: "vote-burst" } });
+    await db.reaction.create({ data: { userId: innocent.id, trackId: track.id, type: "LIKE", ipHash: null } });
+
+    const { chartTop } = await import("@/server/charts/service");
+    const top = await chartTop("all", { client: db });
+    const entry = top.find((e) => e.trackId === track.id);
+    expect(entry).toBeDefined();
+    // flagged (flagged on THIS track) → excluded; honest → counted;
+    // innocent flagged on another track → still counted here.
+    expect(entry!.likes).toBe(2);
+
+    // Flagging the honest voter on THIS track hides exactly their like.
+    await db.voteFlag.create({ data: { userId: honest.id, trackId: track.id, reason: "ip-cluster" } });
+    const after = await chartTop("all", { client: db });
+    expect(after.find((e) => e.trackId === track.id)!.likes).toBe(1);
   });
 });
