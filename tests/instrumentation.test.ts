@@ -19,6 +19,9 @@ afterEach(() => {
 const VALID_ENV = {
   DATABASE_URL: "postgresql://huk:huk@localhost:5432/huk",
   AUTH_SECRET: "test-only fixture value, not a credential",
+  // H-309: register() validates only in the Node.js runtime — every test
+  // that must REACH the validation emulates a Node server boot.
+  NEXT_RUNTIME: "nodejs",
 };
 
 describe("instrumentation.register (H-107, S8 at boot)", () => {
@@ -28,6 +31,7 @@ describe("instrumentation.register (H-107, S8 at boot)", () => {
     process.env = {
       ...savedEnv,
       NEXT_PHASE: "phase-production-server",
+      NEXT_RUNTIME: "nodejs",
       DATABASE_URL: "not-a-url",
     };
     delete process.env.AUTH_SECRET;
@@ -95,5 +99,21 @@ describe("instrumentation.register (H-107, S8 at boot)", () => {
     await expect(register()).resolves.toBeUndefined();
     expect(exitSpy).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/time-zone check could not run/));
+  });
+
+  it("runs nothing in a non-Node runtime (H-309): the Edge analysis path never touches Node APIs", async () => {
+    // NEXT_RUNTIME !== 'nodejs' is exactly what the Edge-runtime analysis of
+    // this file sees — register() must return BEFORE any Node API (the
+    // process.exit use that made `next dev` print the Edge warning).
+    process.env = { ...savedEnv, ...VALID_ENV, NEXT_RUNTIME: "edge" };
+    const { verifyDatabaseTimeZone } = await import("@/server/db-timezone");
+    const verify = vi.mocked(verifyDatabaseTimeZone);
+    verify.mockClear();
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+
+    await expect(register()).resolves.toBeUndefined();
+    expect(verify).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 });
