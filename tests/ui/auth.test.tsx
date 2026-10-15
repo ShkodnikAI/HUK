@@ -237,4 +237,13 @@ describe("Me tab (H-122 task 6)", () => {
     expect(screen.queryByRole("link", { name: /invite/i })).toBeNull();
     expect(screen.queryByText(/export|delete/i)).toBeNull();
   });
+
+  it("an artist gets the My tracks entry (H-123 task 5); a listener does not", () => {
+    const { unmount } = render(<Providers><MeView signedIn email="a@test.example" role="ARTIST" inviteApplicable={false} /></Providers>);
+    const link = screen.getByRole("link", { name: "My tracks" });
+    expect(link.getAttribute("href")).toBe("/en/cabinet");
+    unmount();
+    render(<Providers><MeView signedIn email="l@test.example" role="LISTENER" inviteApplicable={false} /></Providers>);
+    expect(screen.queryByRole("link", { name: "My tracks" })).toBeNull();
+  });
 });

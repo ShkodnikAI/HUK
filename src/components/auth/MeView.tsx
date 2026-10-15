@@ -25,7 +25,6 @@ export function MeView({ signedIn, email, role, inviteApplicable = false }: MeVi
   const t = useTranslations("auth.me");
   const locale = useLocale();
   const router = useRouter();
-
   const signOut = async (): Promise<void> => {
     // Auth.js sign-out: the provider's own CSRF handshake, then reload.
     const csrfRes = await fetch("/api/auth/csrf", { cache: "no-store" });
@@ -64,6 +63,17 @@ export function MeView({ signedIn, email, role, inviteApplicable = false }: MeVi
             className="focus-gold mt-4 inline-flex min-h-[44px] items-center rounded-xl bg-gold px-4 font-semibold text-background hover:brightness-110"
           >
             {t("inviteLink")}
+          </Link>
+        )}
+        {role === "ARTIST" && (
+          // H-123 task 5: the artist entry — "My tracks" (the cabinet) for
+          // the ARTIST role exactly; the cabinet routes re-check the role
+          // server-side, so the link is a convenience, not the guard.
+          <Link
+            href={`/${locale}/cabinet`}
+            className="focus-gold mt-4 inline-flex min-h-[44px] items-center rounded-xl bg-raised px-4 font-medium text-text hover:bg-border"
+          >
+            {t("myTracksLink")}
           </Link>
         )}
         <div className="mt-4">

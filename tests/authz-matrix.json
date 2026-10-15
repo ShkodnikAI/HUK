@@ -110,6 +110,17 @@
     "banned": 403
    }
   },
+  "/api/tracks/:id/lyrics": {
+   "method": "PATCH",
+   "expected": {
+    "anonymous": 401,
+    "LISTENER": 403,
+    "ARTIST": 422,
+    "MODERATOR": 403,
+    "ADMIN": 403,
+    "banned": 403
+   }
+  },
   "/api/reports": {
    "method": "POST",
    "expected": {

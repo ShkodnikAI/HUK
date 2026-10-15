@@ -6019,3 +6019,265 @@ describe.skipIf(!databaseUrl)("access screens auth contracts (H-122)", () => {
     }
   });
 });
+
+describe.skipIf(!databaseUrl)("artist lyrics (H-123)", () => {
+  // NOTE: this suite lives in this file on purpose — cleanTables() truncates
+  // the shared CI database, so every suite that uses it must stay in this
+  // single file (vitest runs test FILES in parallel, describes in sequence).
+  const db = makeClient();
+  const realLoaderLyrics = createDefaultLoader();
+
+  const audioBytesLyrics = Buffer.from("fake-audio-bytes");
+  let lyricsServer: { port: number; close: () => Promise<void> };
+
+  const localLoaderLyrics: SafeLoader = async (req) => {
+    const localUrl = new URL(`http://127.0.0.1:${lyricsServer.port}${req.url.pathname}${req.url.search}`);
+    return realLoaderLyrics({ ...req, url: localUrl, pinnedAddress: "127.0.0.1", headers: { ...req.headers, host: req.headers.host } });
+  };
+  const lyricsSeam = () => ({
+    loader: localLoaderLyrics,
+    resolver: async () => ["93.184.216.34"],
+    portAllowlist: [443, lyricsServer.port],
+    client: db as never,
+  });
+
+  const validLyricsSubmission = {
+    title: "With Lyrics",
+    source: { provider: "DIRECT_URL", url: "https://author-host.test/track.mp3" },
+    rightsOwned: true,
+    aiGenerated: false,
+    humanContribution: "vocals by me",
+    language: "en",
+    instrumental: false,
+    licenseScope: "RADIO_ONLY",
+    tosVersion: "0.0-draft",
+  };
+
+  beforeAll(async () => {
+    lyricsServer = await new Promise((resolve) => {
+      const s = http.createServer((req, res) => {
+        if (req.method === "HEAD") {
+          res.writeHead(200, { etag: '"t1"', "content-length": String(audioBytesLyrics.byteLength) });
+          res.end();
+          return;
+        }
+        res.writeHead(200, { "content-length": String(audioBytesLyrics.byteLength) });
+        res.end(audioBytesLyrics);
+      });
+      s.listen(0, "127.0.0.1", () =>
+        resolve({ port: (s.address() as { port: number }).port, close: () => new Promise<void>((r) => s.close(() => r())) }),
+      );
+    });
+  });
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  afterEach(async () => {
+    await cleanTables(db);
+  });
+
+  afterAll(async () => {
+    await lyricsServer.close();
+  });
+
+  async function lyricsArtist(emailPrefix: string): Promise<{ id: string }> {
+    const u = await db.user.create({ data: { email: `${emailPrefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.example`, role: "ARTIST" } });
+    await db.artistProfile.create({ data: { userId: u.id, handle: `${emailPrefix}-${Math.floor(Math.random() * 1e9)}`, displayName: "Artist" } });
+    await db.session.create({ data: { userId: u.id, sessionToken: `tok-${u.id}`, expires: new Date(Date.now() + 86_400_000) } });
+    return u;
+  }
+
+  async function submitWithLyrics(user: { id: string }, overrides: Record<string, unknown> = {}): Promise<string> {
+    const { submitTrack } = await import("@/server/tracks/submit");
+    const result = await submitTrack(
+      user.id,
+      null,
+      { ...validLyricsSubmission, ...overrides } as never,
+      loadEnv(),
+      lyricsSeam() as never,
+    );
+    return result.trackId;
+  }
+
+  function patchLyrics(user: { id: string } | null, trackId: string, body: unknown): Promise<Response> {
+    return import("@/app/api/tracks/[id]/lyrics/route").then(({ PATCH }) =>
+      PATCH(
+        new Request(`http://localhost:3000/api/tracks/${trackId}/lyrics`, {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json",
+            origin: "http://localhost:3000",
+            ...(user ? { cookie: `${SESSION_COOKIE}=tok-${user.id}` } : {}),
+          },
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ id: trackId }) },
+      ),
+    );
+  }
+
+  it("submission stores normalised lyrics (CRLF folded, trimmed) on the created track", async () => {
+    const u = await lyricsArtist("lyr-a");
+    const trackId = await submitWithLyrics(u, { lyrics: "  first\r\nline\u0301  " });
+    const track = await db.track.findUniqueOrThrow({ where: { id: trackId } });
+    // NFC folds e + U+0301 onto the precomposed code point.
+    expect(track.lyrics).toBe("first\nline\u0301".normalize("NFC"));
+    // A submission without lyrics stores NULL.
+    const plainId = await submitWithLyrics(u, { title: "Plain", lyrics: undefined, source: { provider: "DIRECT_URL", url: "https://author-host.test/b.mp3" } });
+    const plain = await db.track.findUniqueOrThrow({ where: { id: plainId } });
+    expect(plain.lyrics).toBeNull();
+  });
+
+  it("submission with lyrics that carry a link answers 422 LYRICS_LINK_FORBIDDEN and creates nothing", async () => {
+    const u = await lyricsArtist("lyr-b");
+    await expect(submitWithLyrics(u, { lyrics: "find me at example.com" })).rejects.toMatchObject({
+      status: 422,
+      code: "LYRICS_LINK_FORBIDDEN",
+    });
+    expect(await db.track.count()).toBe(0);
+  });
+
+  it("submission with control characters in lyrics answers 422 LYRICS_FORBIDDEN_CHARS", async () => {
+    const u = await lyricsArtist("lyr-c");
+    await expect(submitWithLyrics(u, { lyrics: "bad\u0000lyric" })).rejects.toMatchObject({
+      status: 422,
+      code: "LYRICS_FORBIDDEN_CHARS",
+    });
+  });
+
+  it("the env-driven cap is honoured: LYRICS_MAX_CHARS=10 refuses an 11-character text", async () => {
+    const u = await lyricsArtist("lyr-d");
+    process.env.LYRICS_MAX_CHARS = "10";
+    try {
+      await expect(submitWithLyrics(u, { lyrics: "a".repeat(11) })).rejects.toMatchObject({
+        status: 422,
+        code: "LYRICS_TOO_LONG",
+      });
+    } finally {
+      delete process.env.LYRICS_MAX_CHARS;
+    }
+  });
+
+  it("the owner edits lyrics on their own track: 200, row updated, audit row with the length only", async () => {
+    const u = await lyricsArtist("lyr-e");
+    const trackId = await submitWithLyrics(u);
+    const res = await patchLyrics(u, trackId, { lyrics: "my own\r\nwords" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { track: { lyrics: string | null; lyricsLength: number | null } };
+    expect(body.track.lyrics).toBe("my own\nwords");
+    expect(body.track.lyricsLength).toBe("my own\nwords".length);
+    const track = await db.track.findUniqueOrThrow({ where: { id: trackId } });
+    expect(track.lyrics).toBe("my own\nwords");
+    // The audit row carries the length, never the text.
+    const audits = await db.auditLog.findMany({ where: { action: "track.lyrics.edit", targetId: trackId } });
+    expect(audits).toHaveLength(1);
+    const payload = JSON.stringify(audits[0].payload);
+    expect(payload).not.toContain("my own");
+    expect(payload).toContain('"lyricsLength"');
+  });
+
+  it("removing lyrics sends null, stores null and audits lyricsLength null", async () => {
+    const u = await lyricsArtist("lyr-f");
+    const trackId = await submitWithLyrics(u, { lyrics: "to be removed" });
+    const res = await patchLyrics(u, trackId, { lyrics: null });
+    expect(res.status).toBe(200);
+    const track = await db.track.findUniqueOrThrow({ where: { id: trackId } });
+    expect(track.lyrics).toBeNull();
+    const audits = await db.auditLog.findMany({ where: { action: "track.lyrics.edit", targetId: trackId } });
+    expect(JSON.stringify(audits[0].payload)).toContain('"lyricsLength":null');
+  });
+
+  it("another artist's track answers 404 and stays unchanged", async () => {
+    const owner = await lyricsArtist("lyr-g");
+    const stranger = await lyricsArtist("lyr-h");
+    const trackId = await submitWithLyrics(owner, { lyrics: "owner words" });
+    const res = await patchLyrics(stranger, trackId, { lyrics: "hijacked" });
+    expect(res.status).toBe(404);
+    const track = await db.track.findUniqueOrThrow({ where: { id: trackId } });
+    expect(track.lyrics).toBe("owner words");
+  });
+
+  it("a non-artist (LISTENER) answers 403; an anonymous caller answers 401", async () => {
+    const owner = await lyricsArtist("lyr-i");
+    const listener = await db.user.create({ data: { email: `listener-${Date.now()}@test.example`, role: "LISTENER" } });
+    await db.session.create({ data: { userId: listener.id, sessionToken: `tok-${listener.id}`, expires: new Date(Date.now() + 86_400_000) } });
+    const trackId = await submitWithLyrics(owner);
+    expect((await patchLyrics(listener, trackId, { lyrics: "x" })).status).toBe(403);
+    expect((await patchLyrics(null, trackId, { lyrics: "x" })).status).toBe(401);
+  });
+
+  it("an invalid lyrics body answers 422 with the typed code and the row is untouched", async () => {
+    const u = await lyricsArtist("lyr-j");
+    const trackId = await submitWithLyrics(u, { lyrics: "good words" });
+    const res = await patchLyrics(u, trackId, { lyrics: "go to example.com now" });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("LYRICS_LINK_FORBIDDEN");
+    const track = await db.track.findUniqueOrThrow({ where: { id: trackId } });
+    expect(track.lyrics).toBe("good words");
+  });
+
+  it("the PATCH rate limit refuses after the 20th edit in the hour (fail closed)", async () => {
+    const u = await lyricsArtist("lyr-k");
+    const trackId = await submitWithLyrics(u);
+    let last = 200;
+    for (let i = 0; i < 21; i++) {
+      last = (await patchLyrics(u, trackId, { lyrics: `edit number ${i}` })).status;
+    }
+    expect(last).toBe(429);
+  });
+
+  it("contract: lyrics of a non-APPROVED track reach only the owner (/api/tracks/mine); no public route carries lyrics", async () => {
+    const u = await lyricsArtist("lyr-l");
+    const pendingId = await submitWithLyrics(u, { lyrics: "PENDING-SECRET-LYRICS" });
+    const approvedId = await submitWithLyrics(u, { title: "Approved", lyrics: "APPROVED-PUBLIC-SOON-LYRICS", source: { provider: "DIRECT_URL", url: "https://author-host.test/c.mp3" } });
+    await db.track.update({ where: { id: approvedId }, data: { status: "APPROVED" } });
+
+    // The owner door returns the lyrics for every own status.
+    const { GET } = await import("@/app/api/tracks/mine/route");
+    const mineRes = await GET(
+      new Request("http://localhost:3000/api/tracks/mine", { headers: { cookie: `${SESSION_COOKIE}=tok-${u.id}` } }),
+      { params: Promise.resolve({}) },
+    );
+    const mineBody = JSON.stringify(await mineRes.json());
+    expect(mineBody).toContain("PENDING-SECRET-LYRICS");
+    expect(mineBody).toContain("APPROVED-PUBLIC-SOON-LYRICS");
+    expect(mineBody).toContain('"lyricsMaxChars"');
+
+    // Public reads: the radio feed (with the APPROVED track actually on
+    // air) and the public comments thread never carry lyrics — the public
+    // lyrics display is H-124, not this card.
+    await db.broadcastSlot.create({
+      data: { seq: 1n, trackId: approvedId, startsAt: new Date(Date.now() - 1000), endsAt: new Date(Date.now() + 60_000) },
+    });
+    const radioBody = JSON.stringify(await radioNow(Date.now(), db));
+    expect(radioBody).toContain("Approved"); // the track IS served...
+    expect(radioBody).not.toContain("APPROVED-PUBLIC-SOON-LYRICS"); // ...without its lyrics
+    expect(radioBody).not.toContain('"lyrics"');
+
+    const { GET: comments } = await import("@/app/api/tracks/[id]/comments/route");
+    const commentsRes = await comments(
+      new Request(`http://localhost:3000/api/tracks/${approvedId}/comments`),
+      { params: Promise.resolve({ id: approvedId }) },
+    );
+    expect(JSON.stringify(await commentsRes.json())).not.toContain("APPROVED-PUBLIC-SOON-LYRICS");
+    expect(pendingId).toBeTruthy();
+  });
+
+  it("the mine route reports the server's own limits (used out of the cap, lyrics maximum)", async () => {
+    const u = await lyricsArtist("lyr-m");
+    await submitWithLyrics(u);
+    const { GET } = await import("@/app/api/tracks/mine/route");
+    const res = await GET(
+      new Request("http://localhost:3000/api/tracks/mine", { headers: { cookie: `${SESSION_COOKIE}=tok-${u.id}` } }),
+      { params: Promise.resolve({}) },
+    );
+    const body = (await res.json()) as { limits: { dailySubmissionsUsed: number; dailySubmissionsCap: number; lyricsMaxChars: number } };
+    expect(body.limits.dailySubmissionsUsed).toBe(1);
+    expect(body.limits.dailySubmissionsCap).toBe(2);
+    expect(body.limits.lyricsMaxChars).toBe(6000);
+  });
+});

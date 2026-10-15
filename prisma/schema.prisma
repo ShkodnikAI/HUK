@@ -228,6 +228,11 @@ model Track {
   humanContribution String?
   licenseScope      LicenseScope @default(RADIO_ONLY)
   rightsDeclaredAt  DateTime?
+  // H-123: the artist's own lyrics, optional. Plain text only (S5: it is
+  // data, never rendered as HTML); stored normalized (NFC, \n newlines,
+  // trimmed). Erased with the track (column lives on Track) and covered by
+  // the account-erasure follow-up noted on H-214 (#77).
+  lyrics            String?      @db.Text
   // AI-assisted moderation outputs
   aiConfidence      Float?
   aiSummary         String?
