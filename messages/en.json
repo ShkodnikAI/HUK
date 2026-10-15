@@ -317,5 +317,53 @@
     "genericError": "Something went wrong — try again.",
     "iconUp": "↑",
     "iconDown": "↓"
+  },
+  "auth": {
+    "signin": {
+      "title": "Sign in",
+      "explanation": "Enter your email and we send you a one-time sign-in link. No password, ever.",
+      "emailLabel": "Email",
+      "emailHelp": "The link works once and expires.",
+      "sendLink": "Send the link",
+      "sending": "Sending…",
+      "rateLimited": "Too many attempts — try again in about {minutes} min.",
+      "genericProblem": "The link could not be sent — check the connection and try again.",
+      "noPasswordNote": "There are no passwords on HUK. The first link creates the account."
+    },
+    "checkEmail": {
+      "title": "Check your email",
+      "sentTo": "We sent a sign-in link to {email}.",
+      "sentGeneric": "We sent a sign-in link to your address.",
+      "hint": "The link works once and expires — use it on this device.",
+      "spamHint": "Not there? Check the spam folder.",
+      "useAnotherAddress": "Use another address"
+    },
+    "error": {
+      "title": "This link no longer works",
+      "explanation": "The sign-in link is invalid, expired or already used. Request a new one — it takes a moment.",
+      "backToSignIn": "Back to sign-in"
+    },
+    "invite": {
+      "title": "Artist invite",
+      "explanation": "The beta is invite-only for artists. Listeners need no code.",
+      "codeLabel": "Invite code",
+      "codeHelp": "The code you received — it works once.",
+      "handleLabel": "Handle",
+      "handleHelp": "Your public artist handle (lowercase letters, digits).",
+      "displayNameLabel": "Display name",
+      "redeem": "Redeem the code",
+      "redeeming": "Redeeming…",
+      "invalid": "This code does not work — check it or ask for a new one.",
+      "rateLimited": "Too many attempts — try again in about {minutes} min."
+    },
+    "me": {
+      "title": "Me",
+      "signedOutText": "Sign in to like tracks, comment and keep your playlists.",
+      "signIn": "Sign in",
+      "emailLabel": "Email",
+      "roleLabel": "Role",
+      "inviteLink": "Redeem an artist invite",
+      "signOut": "Sign out"
+    }
   }
 }

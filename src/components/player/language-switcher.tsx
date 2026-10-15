@@ -18,6 +18,9 @@ export function LanguageSwitcher() {
     <nav aria-label={t("label")} className="flex gap-2 text-sm">
       {LOCALES.map((l) => (
         <Link
+          onClick={() => {
+            document.cookie = `NEXT_LOCALE=${l}; path=/; max-age=31536000; samesite=lax`;
+          }}
           key={l}
           href={l === locale ? pathname : `/${l}${rest ? `/${rest}` : ""}`}
           hrefLang={l}
