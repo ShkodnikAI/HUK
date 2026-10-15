@@ -24,6 +24,7 @@ import {
   languageTermSlug,
 } from "@/server/taxonomy/vocabulary";
 import { attachConfirmedTerms, type TermRef } from "@/server/taxonomy/store";
+import { MAX_RAW_LYRICS_CHARS, lyricsHttpError, normalizeLyrics } from "@/server/tracks/lyrics";
 
 const CONTROL = /[\p{Cc}\p{Cf}]/u;
 const BCP47 = /^[a-zA-Z]{2,8}(-[a-zA-Z0-9]{1,8})*$/;
@@ -45,6 +46,10 @@ export const submissionSchema = z
     aiTool: z.string().max(200).optional(),
     aiPlanAtCreation: z.string().max(2000).optional(),
     humanContribution: z.string().max(500),
+    // H-123: optional lyrics, raw string here — the shared pipeline in
+    // src/server/tracks/lyrics.ts normalises and enforces LYRICS_MAX_CHARS
+    // (service level, so submit and edit use one validation path).
+    lyrics: z.string().max(MAX_RAW_LYRICS_CHARS).optional(),
     language: z
       .string()
       .regex(BCP47, "language must be a BCP-47 tag")
@@ -128,6 +133,10 @@ export async function submitTrack(
 ): Promise<{ trackId: string }> {
   const client = seam.client ?? defaultDb;
   const now = new Date();
+  // H-123: lyrics validate BEFORE the source probe — an invalid text must
+  // not spend a network round trip (fail fast, one shared pipeline).
+  const lyrics = normalizeLyrics(input.lyrics ?? null, env.LYRICS_MAX_CHARS);
+  if (!lyrics.ok) throw lyricsHttpError(lyrics.code, env.LYRICS_MAX_CHARS);
   const source = await validateSource(input.source, env, seam);
   const ipHash = ip ? hashIp(ip, now, env) : null;
 
@@ -172,6 +181,7 @@ export async function submitTrack(
         humanContribution: input.humanContribution,
         licenseScope: input.licenseScope,
         rightsDeclaredAt: now,
+        lyrics: lyrics.lyrics,
       },
       select: { id: true },
     });

@@ -18,6 +18,7 @@ import { TrackActions } from "@/components/mod/track-actions";
 import { ReportActions } from "@/components/mod/report-actions";
 import { CommentActions } from "@/components/mod/comment-actions";
 import { TranscriptExcerpt } from "@/components/mod/transcript-excerpt";
+import { LyricsText } from "@/components/mod/lyrics-text";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,7 @@ export type ModerationQueueItem = {
   aiGenerated: boolean;
   aiTool: string | null;
   humanContribution: string | null;
+  lyrics: string | null;
   aiSummary: string | null;
   aiConfidence: number | null;
   transcript: string | null;
@@ -95,6 +97,7 @@ export async function loadModerationQueue(client: PrismaLike = db, take = 50): P
       aiGenerated: track.aiGenerated,
       aiTool: track.aiTool,
       humanContribution: track.humanContribution,
+      lyrics: track.lyrics,
       aiSummary: track.aiSummary,
       aiConfidence: track.aiConfidence,
       transcript: typeof asrPayload.transcript === "string" ? asrPayload.transcript : null,
@@ -201,6 +204,16 @@ export default async function ModConsolePage() {
                   </div>
                   {item.humanContribution ? <div>{t("declarationContribution", { contribution: item.humanContribution })}</div> : null}
                   <div>{item.instrumental ? t("declarationInstrumental") : t("declarationLanguage", { language: item.language ?? t("unknown") })}</div>
+                </dd>
+                <dt>{t("lyrics")}</dt>
+                <dd>
+                  {item.lyrics ? (
+                    // H-123 task 6: the artist's own words, plain text next
+                    // to the declarations (untrusted text is data, S5).
+                    <LyricsText text={item.lyrics} />
+                  ) : (
+                    t("noValue")
+                  )}
                 </dd>
                 <dt>{t("aiSummary")}</dt>
                 <dd>

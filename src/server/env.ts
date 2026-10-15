@@ -47,6 +47,10 @@ const schema = z.object({
     .default(1_000_000),
   PLATFORM_DAILY_SUBMISSION_CAP: z.coerce.number().int().positive().default(10),
   AUTHOR_DAILY_SUBMISSION_CAP: z.coerce.number().int().positive().default(2),
+  // H-123: the maximum accepted lyrics length in characters (after the
+  // normalisation in src/server/tracks/lyrics.ts). Validated like the other
+  // caps: a positive integer; the default matches .env.example.
+  LYRICS_MAX_CHARS: z.coerce.number().int().positive().default(6000),
   INVITE_ONLY: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
