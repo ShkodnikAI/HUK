@@ -51,7 +51,7 @@ console.log(`[db-timezone] database default time zone verified: ${effective}`);
 try {
   execSync("bunx vitest run tests/db", { stdio: "inherit", env: process.env });
 } catch (error) {
-  const status = (error as { status?: number }).status ?? 1;
+  const status = error?.status ?? 1;
   console.error(`[db-timezone] suite FAILED under database time zone ${zone} (exit ${status})`);
   process.exit(status === 0 ? 1 : status);
 }

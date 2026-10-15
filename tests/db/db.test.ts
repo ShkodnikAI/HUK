@@ -69,6 +69,7 @@ import {
 } from "@/server/broadcast/audio-cache";
 import { GET as audioGET, HEAD as audioHEAD, servableTrack } from "@/app/api/audio/[trackId]/route";
 import { effectiveDatabaseTimeZone } from "@/server/db-timezone";
+import { db as appDb } from "@/server/db";
 
 interface MatrixEntry {
     method: string;
@@ -4124,8 +4125,14 @@ describe.skipIf(!databaseUrl)("moderation claim + leadership gate (H-211, G1)", 
     // is fresh…
     expect(await claimModerationTrack(track.id, db)).toBe(false);
     // …and succeeds once the claim is older than the 10-minute TTL (fake
-    // clock: the row is backdated directly).
-    await db.$executeRaw`UPDATE "Track" SET "moderationClaimedAt" = now() - interval '11 minutes' WHERE "id" = ${track.id}`;
+    // clock: the row is backdated via the ORM — the UTC wall clock by
+    // construction, independent of the session zone; a raw
+    // `now() - interval '11 minutes'` would write the SESSION-zone rendering
+    // and shift under the H-306 matrix databases).
+    await db.track.update({
+      where: { id: track.id },
+      data: { moderationClaimedAt: new Date(Date.now() - 11 * 60_000) },
+    });
     expect(await claimModerationTrack(track.id, db)).toBe(true);
     expect(await claimModerationTrack(track.id, db)).toBe(false);
   });
@@ -5269,7 +5276,13 @@ describe.skipIf(!databaseUrl)("broadcast audio cache (H-112, D14)", () => {
 // `raw = makeClient()` deliberately does NOT — together the two clients prove
 // both layers: the session mechanism AND the explicit SQL hardening.
 describe.skipIf(!databaseUrl)("database time zone independence (H-306)", () => {
+  const db = makeClient();
+
   beforeEach(async () => {
+    // The mechanism guard builds the app client, whose loadEnv() requires
+    // AUTH_SECRET; in a filtered run (-t) no other describe has set it yet
+    // (the same fixture pattern every other DB describe here uses).
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
     await cleanTables(db);
   });
 
@@ -5293,10 +5306,12 @@ describe.skipIf(!databaseUrl)("database time zone independence (H-306)", () => {
   }
 
   it("the app's pooled connections run in UTC even when the database default is not (mechanism guard)", async () => {
-    // Red on a non-UTC database the moment the connection mechanism is
-    // removed — the matrix zones make this meaningful; the UTC run alone
-    // cannot (SHOW timezone would answer UTC with or without the mechanism).
-    await expect(effectiveDatabaseTimeZone(db)).resolves.toBe("UTC");
+    // appDb = src/server/db.ts — the mechanism-carrying client every pooled
+    // app connection comes from. Red on a non-UTC database the moment the
+    // connection mechanism is removed — the matrix zones make this
+    // meaningful; the UTC run alone cannot (SHOW timezone would answer UTC
+    // with or without the mechanism there).
+    await expect(effectiveDatabaseTimeZone(appDb)).resolves.toBe("UTC");
   });
 
   it("ORM schedule writes store the UTC wall clock and round-trip (raw session, no mechanism)", async () => {

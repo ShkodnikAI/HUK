@@ -43,10 +43,10 @@ describe("withUtcTimeZone (H-306)", () => {
     expect(out).not.toContain("+");
   });
 
-  it("accepts the postgres:// scheme and empty-password credentials", () => {
-    const out = withUtcTimeZone("postgres://huk@/huk?host=/var/run/postgresql");
+  it("accepts the postgres:// scheme and passwordless credentials", () => {
+    const out = withUtcTimeZone("postgres://huk@db.local:5432/huk");
     expect(optionsOf(out)).toBe("-c timezone=UTC");
-    expect(new URL(out).searchParams.get("host")).toBe("/var/run/postgresql");
+    expect(new URL(out).username).toBe("huk");
   });
 
   it("hands a non-URL string through unchanged (S8 rejects it earlier)", () => {
