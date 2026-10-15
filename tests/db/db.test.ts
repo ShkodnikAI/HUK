@@ -55,6 +55,7 @@ import {
 } from "@/server/playlists/service";
 import { startMaintenance, type MaintenanceJob } from "@/server/maintenance/runner";
 import type { PrismaClient, User } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { readdirSync, readFileSync, writeFileSync, mkdtempSync as mkTempDir, rmSync as rmTree, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import {
@@ -5655,4 +5656,158 @@ describe.skipIf(!databaseUrl)("ranking integrity (H-307)", () => {
     expect(written).toBe(1);
     expect(elapsed).toBeLessThan(1000);
   }, 30_000);
+});
+
+// ────────────────── H-308 — account erasure completeness (S7) ────────────────────
+// After erasure the old user id survives in exactly two places: AuditLog
+// (the id only) and Consent (kept by design). Every user-keyed column is
+// either handled by the erasure or on an explicit allowlist with a reason,
+// and the introspection guard fails when a future table escapes (fixture).
+describe.skipIf(!databaseUrl)("account erasure completeness (H-308)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    // deleteAccount writes the audit row through the app client (loadEnv);
+    // in a filtered (-t) run no other describe has set the fixture yet.
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  const USER_KEYED_COLUMNS = ["userId", "ownerId", "authorId", "reporterId", "createdById", "usedById"] as const;
+
+  /** table.column → how deleteAccount handles it (kept in lockstep with src/server/account/service.ts). */
+  const ERASURE_HANDLED: Record<string, string> = {
+    "Account.userId": "deleted",
+    "Session.userId": "deleted",
+    "ArtistProfile.userId": "deleted",
+    "ArtistInvite.createdById": "deleted — invites created by the erased account (createdById is NOT NULL, nulling would weaken the constraint)",
+    "ArtistInvite.usedById": "nulled — the redeemed invite survives keyless",
+    "Reaction.userId": "deleted",
+    "ListenSession.userId": "deleted",
+    "ListenEvent.userId": "deleted",
+    "VoteFlag.userId": "deleted",
+    "Playlist.ownerId": "deleted",
+    "Comment.authorId": "nulled + [removed] placeholder body",
+    "Report.reporterId": "nulled (the report survives for moderation, contact removed)",
+  };
+  /** table.column → kept by design, with the reason. */
+  const ERASURE_ALLOWLIST: Record<string, string> = {
+    "Consent.userId": "kept by design — proves what document version was accepted; no raw IP",
+  };
+  // Note: Report.resolvedById (moderation attribution) is deliberately not in
+  // the six-column list of the naryad — it keeps a moderator's id exactly
+  // like AuditLog keeps the erased user's id (the row is anonymised).
+
+  async function unhandledUserKeyedColumns(client: PrismaClient): Promise<string[]> {
+    const rows = await client.$queryRaw<Array<{ table_name: string; column_name: string }>>`
+      SELECT table_name, column_name FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND column_name IN (${Prisma.join(USER_KEYED_COLUMNS)})
+    `;
+    return rows
+      .map((r) => `${r.table_name}.${r.column_name}`)
+      .filter((key) => !(key in ERASURE_HANDLED) && !(key in ERASURE_ALLOWLIST));
+  }
+
+  it("the schema-introspection guard: every user-keyed column is handled or allowlisted with a reason (H-308 task 3)", async () => {
+    expect(await unhandledUserKeyedColumns(db)).toEqual([]);
+  });
+
+  it("the guard FAILS when a new table escapes erasure (fixture with a userId column)", async () => {
+    await db.$executeRawUnsafe(`CREATE TABLE "_h308_fixture_userleak" (id text primary key, "userId" text)`);
+    try {
+      const unhandled = await unhandledUserKeyedColumns(db);
+      expect(unhandled).toContain('_h308_fixture_userleak.userId');
+    } finally {
+      await db.$executeRawUnsafe(`DROP TABLE "_h308_fixture_userleak"`);
+    }
+  });
+
+  it("erasure deletes every user-keyed row; the report survives keyless and contactless; scores of listened tracks drop too", async () => {
+    const { deleteAccount } = await import("@/server/account/service");
+    const user = await db.user.create({ data: { email: `erased-${Date.now()}@test.example`, name: "Erased", role: "ARTIST" } });
+    const admin = await db.user.create({ data: { email: `admin-${Date.now()}@test.example`, role: "ADMIN" } });
+    await db.session.create({ data: { userId: user.id, sessionToken: `tok-${user.id}`, expires: new Date(Date.now() + 86_400_000) } });
+    await db.account.create({ data: { userId: user.id, type: "oauth", provider: "test", providerAccountId: `acc-${user.id}` } });
+    await db.verificationToken.create({ data: { identifier: user.email, token: `vt-${user.id}`, expires: new Date(Date.now() + 3_600_000) } });
+    const profile = await db.artistProfile.create({ data: { userId: user.id, handle: `erased-${Math.floor(Math.random() * 1e9)}`, displayName: "Erased Artist" } });
+    const ownTrack = await db.track.create({ data: { artistId: profile.id, title: "own", status: "APPROVED", available: true } });
+    const otherTrack = await db.track.create({ data: { title: "other", status: "APPROVED", available: true } });
+    await db.consent.create({ data: { userId: user.id, document: "tos", version: "0.0-draft", ipHash: null } });
+    // Invites: one CREATED by the user (must be deleted), one they REDEEMED (must survive, usedById null).
+    await db.artistInvite.create({ data: { codeHash: "a".repeat(64), createdById: user.id, expiresAt: new Date(Date.now() + 86_400_000) } });
+    const redeemed = await db.artistInvite.create({ data: { codeHash: "b".repeat(64), createdById: admin.id, expiresAt: new Date(Date.now() + 86_400_000), usedById: user.id, usedAt: new Date() } });
+    await db.playlist.create({ data: { ownerId: user.id, name: "pl", visibility: "PRIVATE" } });
+    await db.reaction.create({ data: { userId: user.id, trackId: otherTrack.id, type: "LIKE", ipHash: null } });
+    await db.comment.create({ data: { trackId: otherTrack.id, authorId: user.id, body: "mine", status: "HELD" } });
+    await db.listenSession.create({ data: { userId: user.id, trackId: otherTrack.id, mode: "RADIO", verifiedMs: 40_000, completed: true } });
+    await db.listenEvent.create({ data: { userId: user.id, trackId: otherTrack.id, mode: "RADIO", msListened: 40_000, completed: true } });
+    await db.voteFlag.create({ data: { userId: user.id, trackId: otherTrack.id, reason: "vote-burst" } });
+    await db.report.create({ data: { targetType: "TRACK", targetId: otherTrack.id, reporterId: user.id, reporterContact: "voice@example.com", reason: "check please" } });
+    // Scores on every affected track + one unaffected sentinel.
+    for (const t of [ownTrack, otherTrack]) {
+      await db.trackScore.create({ data: { trackId: t.id, categoryKey: "all", score: 0.5, nEff: 20, voters: 11 } });
+    }
+    const untouchedTrack = await db.track.create({ data: { title: "untouched", status: "APPROVED", available: true } });
+    await db.trackScore.create({ data: { trackId: untouchedTrack.id, categoryKey: "all", score: 0.5, nEff: 20, voters: 11 } });
+
+    await deleteAccount(user, { confirmEmail: user.email }, { client: db });
+
+    // Zero rows keyed by the old user id everywhere except AuditLog + Consent:
+    expect(await db.session.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.account.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.verificationToken.count({ where: { identifier: user.email } })).toBe(0);
+    expect(await db.artistProfile.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.playlist.count({ where: { ownerId: user.id } })).toBe(0);
+    expect(await db.reaction.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.listenSession.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.listenEvent.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.voteFlag.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.artistInvite.count({ where: { createdById: user.id } })).toBe(0);
+    expect(await db.artistInvite.count({ where: { usedById: user.id } })).toBe(0);
+    expect(await db.report.count({ where: { reporterId: user.id } })).toBe(0);
+    expect(await db.comment.count({ where: { authorId: user.id } })).toBe(0);
+    // The survivors, exactly as documented:
+    expect(await db.consent.count({ where: { userId: user.id } })).toBe(1); // kept by design
+    expect(await db.auditLog.count({ where: { action: "account.deleted", targetId: user.id } })).toBe(1);
+    const redeemedAfter = await db.artistInvite.findUniqueOrThrow({ where: { codeHash: "b".repeat(64) } });
+    expect(redeemedAfter.usedById).toBeNull(); // the redeemed invite survives keyless
+    // The reporter's report survives — null reporter, no contact (done criterion).
+    const report = await db.report.findFirstOrThrow({ where: { reason: "check please" } });
+    expect(report.reporterId).toBeNull();
+    expect(report.reporterContact).toBeNull();
+    // The comment survives anonymised.
+    const comment = await db.comment.findFirstOrThrow({ where: { body: "[removed]" } });
+    expect(comment.authorId).toBeNull();
+    // Scores: reacted + listened + own tracks dropped; the sentinel survives.
+    expect(await db.trackScore.count({ where: { trackId: { in: [ownTrack.id, otherTrack.id] } } })).toBe(0);
+    expect(await db.trackScore.count({ where: { trackId: untouchedTrack.id } })).toBe(1);
+    // The user row is anonymised, not deleted.
+    const after = await db.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(after.deletedAt).not.toBeNull();
+    expect(after.email).toBe(`deleted-${user.id}@invalid.local`);
+  });
+
+  it("the export covers every handled table (listen sessions, vote flags, report contact) — export parity", async () => {
+    const { exportUserData } = await import("@/server/account/service");
+    const user = await db.user.create({ data: { email: `parity-${Date.now()}@test.example`, name: "Parity" } });
+    const track = await db.track.create({ data: { title: "parity", status: "APPROVED", available: true } });
+    await db.listenSession.create({ data: { userId: user.id, trackId: track.id, mode: "RADIO", verifiedMs: 12_000 } });
+    await db.listenEvent.create({ data: { userId: user.id, trackId: track.id, mode: "RADIO", msListened: 12_000, completed: true } });
+    await db.voteFlag.create({ data: { userId: user.id, trackId: track.id, reason: "ip-cluster" } });
+    await db.report.create({ data: { targetType: "TRACK", targetId: track.id, reporterId: user.id, reporterContact: "me@example.com", reason: "x" } });
+    const doc = (await exportUserData(user, { client: db })) as {
+      listenSessions: Array<{ trackId: string; msListened: number }>;
+      listenEvents: Array<{ trackId: string }>;
+      voteFlags: Array<{ trackId: string; reason: string }>;
+      reports: Array<{ reporterContact: string | null }>;
+    };
+    expect(doc.listenSessions).toHaveLength(1);
+    expect(doc.listenSessions[0].msListened).toBe(12_000);
+    expect(doc.listenEvents).toHaveLength(1);
+    expect(doc.voteFlags).toHaveLength(1);
+    expect(doc.voteFlags[0].trackId).toBe(track.id);
+    expect(doc.voteFlags[0].reason).toBe("ip-cluster");
+    expect(doc.reports[0].reporterContact).toBe("me@example.com");
+  });
 });
