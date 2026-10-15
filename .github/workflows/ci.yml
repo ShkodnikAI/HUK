@@ -80,6 +80,15 @@ jobs:
       - run: bun run lint
       - run: bun run typecheck
       - run: bun run test
+      # H-306: the database suite must also pass against a database whose
+      # DEFAULT time zone is not UTC — the condition that silently broke the
+      # station on the Owner's host (Europe/Minsk). The runner ALTERs the
+      # database default zone, proves it took effect, then runs tests/db;
+      # red here means the time-zone mechanism or the explicit SQL broke.
+      - name: DB suite under a non-UTC database — Europe/Minsk (H-306)
+        run: bun tests/db/run-under-timezone.mjs Europe/Minsk
+      - name: DB suite under a non-UTC database — America/Los_Angeles (H-306)
+        run: bun tests/db/run-under-timezone.mjs America/Los_Angeles
       - run: bun run build
 
   branch-freshness:
