@@ -22,7 +22,14 @@
     "next": "Next track",
     "playlistUnavailable": "(unavailable)",
     "addToPlaylist": "Add to playlist",
-    "noPlaylists": "No playlists yet — create one via the API or import"
+    "noPlaylists": "No playlists yet — create one via the API or import",
+    "dislike": "Dislike (private)",
+    "iconPlay": "▶",
+    "iconPause": "❚❚",
+    "iconHeart": "♥",
+    "iconHeartDown": "♥",
+    "likesCount": "· {count}",
+    "playlistOption": "{name} ({count})"
   },
   "language": {
     "label": "Language"
@@ -273,5 +280,42 @@
     "quietTitle": "The station is silent",
     "quietText": "Nothing is on air right now. Check the schedule or come back a little later.",
     "notFoundCode": "404"
+  },
+  "radio": {
+    "live": "Live",
+    "oneTimeline": "One shared timeline for everyone",
+    "languageChip": "Language: {language}",
+    "aiChip": "AI-assisted",
+    "instrumentalChip": "Instrumental",
+    "progress": "Position in the track",
+    "upNext": "Up next",
+    "comments": "Comments"
+  },
+  "playlists": {
+    "title": "My playlists",
+    "newName": "Playlist name",
+    "nameHelp": "Visible to you; public and unlisted playlists are shareable.",
+    "create": "Create playlist",
+    "play": "Play",
+    "rename": "Rename",
+    "renamePrompt": "New playlist name",
+    "delete": "Delete",
+    "remove": "Remove",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "open": "Open",
+    "close": "Close",
+    "empty": "No playlists yet — create the first one above.",
+    "emptyGuest": "Playlists live in your account. Sign in to keep yours across devices.",
+    "emptyPlaylist": "This playlist is empty — add tracks from the radio screen.",
+    "unavailable": "(unavailable)",
+    "itemCount": "{count, plural, one {# track} other {# tracks}}",
+    "limitReached": "You already have the maximum number of playlists (50).",
+    "playlistFull": "This playlist is full (500 tracks).",
+    "alreadyInPlaylist": "This track is already in the playlist.",
+    "textRejected": "This name contains characters or links that are not allowed.",
+    "genericError": "Something went wrong — try again.",
+    "iconUp": "↑",
+    "iconDown": "↓"
   }
 }

@@ -5857,3 +5857,47 @@ describe.skipIf(!databaseUrl)("public like integrity (H-309)", () => {
     expect(after.find((e) => e.trackId === track.id)!.likes).toBe(1);
   });
 });
+
+// ───────────────────────── H-121 — /now contract extension ─────────────────────────
+// The single SQL statement stays a pure read (at most 2 queries, one body
+// for every listener) and now also carries the declarations the radio
+// screen chips need: language, instrumental, aiGenerated.
+describe.skipIf(!databaseUrl)("/now contract extension (H-121)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    await cleanTables(db);
+  });
+
+  it("/now returns language, instrumental and aiGenerated in at most 2 queries", async () => {
+    const track = await db.track.create({
+      data: { title: "declared", status: "APPROVED", available: true, durationSec: 120, language: "en", instrumental: true, aiGenerated: true },
+    });
+    await db.trackSource.create({ data: { trackId: track.id, provider: "SEED", url: "https://example.com/x.mp3" } });
+    const nowMs = Date.now();
+    await db.broadcastSlot.createMany({
+      data: [
+        { seq: 1n, trackId: track.id, startsAt: new Date(nowMs - 10_000), endsAt: new Date(nowMs + 50_000) },
+        { seq: 2n, trackId: track.id, startsAt: new Date(nowMs + 60_000), endsAt: new Date(nowMs + 120_000) },
+      ],
+    });
+
+    let queries = 0;
+    const countingClient = {
+      $queryRaw: (...args: unknown[]) => {
+        queries++;
+        return (db.$queryRaw as (...a: unknown[]) => unknown)(...args);
+      },
+    };
+    const result = await radioNow(nowMs, countingClient as never);
+
+    expect(result.current).not.toBeNull();
+    expect(result.current!.track.language).toBe("en");
+    expect(result.current!.track.instrumental).toBe(true);
+    expect(result.current!.track.aiGenerated).toBe(true);
+    expect(result.next[0]).toBeDefined();
+    expect(result.next[0].track.instrumental).toBe(true);
+    // The pure-read budget holds: at most 2 queries for the whole body.
+    expect(queries).toBeLessThanOrEqual(2);
+  });
+});

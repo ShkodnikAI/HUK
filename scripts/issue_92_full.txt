@@ -1,0 +1,87 @@
+==========================================================================================
+#92 [open] H-121: Listener screens — radio (phone and desktop) and my playlists
+==========================================================================================
+<!-- naryad:H-121 -->
+### Plan card
+
+H-121
+
+### Priority
+
+P0
+
+### Class
+
+[feature]
+
+### Step 0 - verify before starting
+
+```bash
+git fetch origin main --force && git log origin/main -1 --format='%H %ci %s'   # AGENTS.md section 4
+git reset --hard origin/main   # clean tree only; compare again before opening the PR
+ls docs/design/screens-v1/Main.dc.html src/components/shell   # design reference and H-120 must be on main
+```
+Wave gate: starts after H-120 is merged. Critical path by the Owner's direction (2026-10-09).
+
+### Fact base (Auditor, read on `main`; not run)
+
+- `src/components/player/radio-player.tsx` (592 lines) is one client component that does everything: polls `/api/radio/now`, corrects drift, applies regional restrictions through `/api/geo`, sends listen start/beat, reads and writes reactions (`/api/me/reactions`, `/api/reactions`), switches between radio and "My playlist" mode, and shows a native `<select>` for playlists and a `<details>` "Add to playlist". The UI is bare: a play button, the title, a Like button. It sits in the footer of the locale layout.
+- The home page is a placeholder text. There is no dislike button in the UI although `POST /api/reactions` accepts a private DISLIKE.
+- `RadioNowTrack` (`src/lib/radio/contract.ts`) carries `id, title, artist, durationSec, audioUrl, restrictedIn, likes` but not the language, the instrumental flag or whether the track is AI-generated; those columns exist on `Track` (`language`, `instrumental`, `aiGenerated`). `/api/radio/now` is a pure read, one SQL query, identical for every listener and cached 2 s: it must stay that way.
+- Playlist APIs are merged (`/api/playlists`, `/api/playlists/[id]`, `.../items`, `.../import`, H-302); playlist playback honours `licenseScope`. There is no playlist screen.
+- Boards: `Main.dc.html` (phone radio), `DesktopRadio.dc.html`, `Playlists.dc.html`. The comment ticker on `Main` is delivered by a later naryad after the comments API exists (H-303); here you only reserve its slot.
+
+### Task
+
+1. **Split the player.** Move the audio engine (the `<audio>` element, timeline sync, drift correction, retries, geo restrictions, listen heartbeat, Media Session, playlist playback) into a provider mounted once in the locale layout, exposing state and actions through a typed hook. Views read the hook. This is a refactor first: behaviour must not change, and the existing tests (`tests/sync*`, `tests/listen-client.test.ts`) must pass unchanged.
+2. **Radio screen** at `/[locale]` per `Main.dc.html` (phone) and `DesktopRadio.dc.html` (1024 px and up): LIVE badge with "One shared timeline for everyone", the now-playing card (progress from the server timeline, title, artist name, chips for language and "AI-assisted" when declared, the instrumental chip), large play/pause, Like and private Dislike buttons with the 30-second lock explained in words (the existing lock logic stays), "Add to playlist" (a proper menu or sheet instead of `<details>`), "Report" (links to the report page only if it exists, otherwise not rendered; the report form itself is not in this naryad), the Radio / My playlist switch. The artist name is plain text until the artist profile route exists. The Dislike button shows no count and no state to anyone else; the Like count shown is the public one from `/now`.
+3. **`/now` contract.** Add `language: string | null`, `instrumental: boolean` and `aiGenerated: boolean` to `RadioNowTrack` and to the existing single SQL statement; the response stays identical for all listeners, a pure read, at most 2 queries (the existing test is extended). AUDIUS and other URLs are untouched.
+4. **Quiet state.** When `/now` has no current track, show the `QuietState` from H-120. When a track fails to play, keep the current retry behaviour and show the existing "waiting for the next one" message in the new style.
+5. **Playlists screen** at `/[locale]/playlists` per `Playlists.dc.html`: list, create, rename, delete, open a playlist, reorder items (the PATCH route), remove an item, unavailable items marked in words, "Play" starting playlist mode. Guest playlists keep working through the existing local-first sync (`src/lib/sync`); after sign-in they are imported through `/api/playlists/import` as today. Limits (50 playlists x 500 tracks) shown in the user's language when reached. Turn on the Radio and Playlists navigation flags from H-120.
+6. **Tests:** engine/view split keeps one `<audio>` and survives navigation; reaction lock and private dislike (no count rendered anywhere); `/now` extension; playlist screen states (empty, unavailable item, limit reached); axe checks; all strings in both catalogs.
+
+### Out of scope
+
+Comments and the ticker (H-303 follow-up), the track page, charts, search, the report form, sign-in, anything under `src/server/**` except the `/now` change, loudness or crossfade, background-play work beyond what exists (a real-device playback check is a separate Owner/Auditor step).
+
+### Scope - files/dirs that may change
+
+`src/components/player/**`, `src/components/shell/**` (only to flip nav flags), `src/app/[locale]/page.tsx`, `src/app/[locale]/playlists/**`, `src/lib/radio/**`, `src/lib/sync/**` (only if the playlist screen needs it), `src/app/api/radio/now/route.ts`, `messages/*.json`, `tests/**`.
+
+### Done criteria
+
+- Radio screen and playlist screen match the boards on phone and desktop widths; no `[bracket]` text; no colour-only status.
+- Engine/view split: all pre-existing player tests pass without edits; one `<audio>` element; navigation between Radio and Playlists does not interrupt playback (test).
+- `/now`: at most 2 queries, identical body for different callers, new fields present (test).
+- No dislike count or state is rendered or fetched for other users (contract test over rendered output and GET routes stays green).
+- axe: no violations on both screens; catalog parity; lint, typecheck, test, build green; CI green on the merge commit.
+- Owner acceptance later on the real host (real-device playback check, not by the Agent).
+
+You merge this PR yourself once every required check is green on the merge commit (AGENTS.md sections 0 and 6). The report (AGENTS.md section 10) lists these tasks one by one with their status; a task not done is reported as not done. Merged is not accepted: the Auditor audits after merge.
+
+### Depends on
+
+H-120, H-104, H-105, H-301, H-302. H-112 changes which URL a `DIRECT_URL` track plays from, but not the contract; the two do not conflict.
+
+
+---
+_Generated by [Claude Code](https://claude.ai/code)_
+------------------------------------------------------------------------------------------
+--- comment by ShkodnikAI at 2026-10-09T18:30:51Z ---
+**Dispatch (Auditor, 2026-10-09)** - H-121, step 5 of 10.
+
+Queue: #89 > #91 > #90 > #92 > #93 > #94 > #74 > #76 > #77 (PR #88 first).
+
+Start after: H-120 (#91) merged.
+
+Listener screens (radio, playlists). Refactor first, no behaviour change.
+
+**Rules for the whole queue**
+- One branch and one PR per naryad; do not start the next card before the previous PR is merged and its report (AGENTS.md section 10, every task listed, not-done tasks reported as not done) is posted on its issue.
+- Stay inside each card's scope; do not edit `AGENTS.md`, `docs/PLAN.md`, `docs/audits/**`, `.github/**` or `scripts/ci/**` unless the card says so.
+- Do not touch the parked cards #52, #85, #86, #87 or any card that is not published (H-124, H-125, H-126, H-403). H-402 (#71) waits for the Owner's confirmation of the vocabulary; skip it in the queue until the issue says it is released.
+- Merge your own PR only when every required check is green on the merge commit (D11). Merged is not accepted: the Auditor audits each card afterwards and the Owner accepts on the real host where the card says so.
+
+
+---
+_Generated by [Claude Code](https://claude.ai/code)_

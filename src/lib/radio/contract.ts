@@ -24,6 +24,12 @@ export interface RadioNowTrack {
    * /now body stays cache-safe). Dislikes are never exposed anywhere.
    */
   likes: number;
+  /** H-121: confirmed/submitted language code ("en", "ru", ...), or null. */
+  language: string | null;
+  /** H-121: instrumental declaration (chip on the radio screen). */
+  instrumental: boolean;
+  /** H-121: AI-assisted declaration (the "AI-assisted" chip when declared). */
+  aiGenerated: boolean;
 }
 
 export interface RadioNowSlot {
