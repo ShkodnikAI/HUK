@@ -10,10 +10,10 @@ the scores. The API renders this file (H-305).
 |---|---|---|
 | A like | +1 | |
 | A dislike | −1 | Never shown publicly; never removes a track from the air |
-| Added to a public playlist | +1.5 | The track was deliberately chosen |
+| Added to a playlist | +1.5 | At most one add per owner per track, however many playlists hold it |
 | Listened to ≥ 80 % | +0.5 | Once per listener per UTC day |
 | Listened to ≥ 80 % on another day | +0.5 | Coming back matters more than a single sit-through |
-| Skipped early in a personal playlist | −0.5 | The listener chose the track and still skipped it |
+| Skipped early in a personal playlist | −0.5 | Signed-in listeners only, at most one per track per UTC day; anonymous skips never count |
 
 Every signal is multiplied by the listener's **reputation** (new accounts
 start at 0.2 and reach 1.0 after 14 days) and by a **time decay** with a

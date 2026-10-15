@@ -1,11 +1,13 @@
 // POST /api/playlists/[id]/items (add, owner-only, eligibility + 500 cap)
 // and PATCH /api/playlists/[id]/items (reorder; positions contiguous).
+// H-307: per-user rate limit on add-item — 60 per hour, 429 + Retry-After.
 
 import { z } from "zod";
 import { route } from "@/server/http/handler";
 import { parseJson } from "@/server/http/parse";
 import { requireSession } from "@/server/guard";
-import { addItem, reorderItems } from "@/server/playlists/service";
+import { rateLimit, tooManyRequests } from "@/server/ratelimit";
+import { addItem, reorderItems, PLAYLIST_ADD_ITEM_LIMIT } from "@/server/playlists/service";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +21,8 @@ type Ctx = { params: Promise<{ id?: string }> };
 export const POST = route<Ctx>(async (req, ctx) => {
   const { user } = await requireSession(req);
   const playlistId = (await ctx.params).id ?? "";
+  const limit = await rateLimit({ key: `pl:add:${user.id}`, ...PLAYLIST_ADD_ITEM_LIMIT });
+  if (!limit.ok) return tooManyRequests(limit.retryAfterSec, "pl-add");
   const body = await parseJson(req, addItemSchema);
   const { position } = await addItem(playlistId, user.id, body.trackId);
   return Response.json({ position }, { status: 201 });

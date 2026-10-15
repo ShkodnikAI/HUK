@@ -36,8 +36,9 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, utimesSync, existsSync, statSync, rmSync } from "node:fs";
 import { route } from "@/server/http/handler";
 import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
-import { VERIFIED_FOR_REACTION_MS, beat, closeStaleSessions, startListenSession } from "@/server/listen/session";
-import { makeRankingJobs, recomputeTrackScores } from "@/server/ranking/job";
+import { VERIFIED_FOR_REACTION_MS, beat, closeStaleSessions, closeSession, startListenSession } from "@/server/listen/session";
+import { collectRankedEvents, makeRankingJobs, recomputeTrackScores } from "@/server/ranking/job";
+import { scoreTrack } from "@/server/ranking/signals";
 import { detectIpClusters, detectVoteBursts, reputationFor, runAntifraudPass, updateReputations, type VoteRecord } from "@/server/ranking/antifraud";
 import { react, unreact } from "@/server/reactions/service";
 import {
@@ -5451,4 +5452,207 @@ describe.skipIf(!databaseUrl)("database time zone independence (H-306)", () => {
       await raw.$disconnect();
     }
   });
+});
+
+// ────────────────── H-307 — ranking integrity ──────────────────────
+// Anonymous negatives do not exist; one negative per actor per UTC day;
+// one PLAYLIST_ADD per owner per track, weighted by reputation; atomic
+// session close; the 4th concurrent open session closes the oldest;
+// deterministic scoring; bounded per-user playlist rate limits.
+describe.skipIf(!databaseUrl)("ranking integrity (H-307)", () => {
+  const db = makeClient();
+
+  beforeEach(async () => {
+    process.env.AUTH_SECRET ??= "test-only fixture value, not a credential";
+    await cleanTables(db);
+  });
+
+  async function mkUser(email: string, reputation: number): Promise<User> {
+    return db.user.create({ data: { email, reputation } });
+  }
+
+  /** An APPROVED, available, on-demand-playable track (the playlist contract). */
+  async function mkPlayableTrack(title: string): Promise<string> {
+    const track = await db.track.create({
+      data: { title, status: "APPROVED", available: true, durationSec: 120, licenseScope: "RADIO_AND_PLAYLISTS" },
+    });
+    await db.trackSource.create({ data: { trackId: track.id, provider: "SEED", url: `https://example.com/${title}.mp3` } });
+    return track.id;
+  }
+
+  it("1000 anonymous start+skip sessions change the score by exactly 0 (H-307 task 1)", async () => {
+    const trackId = await mkPlayableTrack("anon-skips");
+    const liker = await mkUser(`liker-${Date.now()}@test.example`, 1.0);
+    await db.reaction.create({ data: { trackId, userId: liker.id, type: "LIKE" } });
+    // One shared nowMs: the decay of the LIKE must be identical in both
+    // collect calls — only the skip flood may differ.
+    const nowMs = Date.now();
+    const withSkips = await collectRankedEvents(trackId, nowMs, db);
+    expect(withSkips.filter((e) => e.type === "EARLY_SKIP_PLAYLIST")).toHaveLength(0);
+    // The anon skip flood must not even nEff-shift the track.
+    await db.listenEvent.createMany({
+      data: Array.from({ length: 1000 }, (_, i) => ({
+        trackId,
+        anonHash: `anon-${i % 7}`,
+        mode: "PLAYLIST" as const,
+        msListened: 1000,
+        skippedEarly: true,
+        createdAt: new Date(Date.now() - i * 1000),
+      })),
+    });
+    const after = await collectRankedEvents(trackId, nowMs, db);
+    expect(after.filter((e) => e.type === "EARLY_SKIP_PLAYLIST")).toHaveLength(0);
+    // Bit-identical score with and without the flood present.
+    const scoreBefore = scoreTrack(withSkips);
+    const scoreAfter = scoreTrack(after);
+    expect(Object.is(scoreAfter.score, scoreBefore.score)).toBe(true);
+    expect(Object.is(scoreAfter.nEff, scoreBefore.nEff)).toBe(true);
+  });
+
+  it("one authenticated actor skipping for a week yields at most one capped event per UTC day, weighted by reputation", async () => {
+    const trackId = await mkPlayableTrack("auth-skips");
+    const actor = await mkUser(`skiper-${Date.now()}@test.example`, 0.5);
+    // 3 skips on each of 8 distinct UTC days (the 8th day back).
+    await db.listenEvent.createMany({
+      data: Array.from({ length: 8 * 3 }, (_, i) => ({
+        trackId,
+        userId: actor.id,
+        mode: "PLAYLIST" as const,
+        msListened: 1000,
+        skippedEarly: true,
+        createdAt: new Date(Date.now() - Math.floor(i / 3) * 86_400_000 - (i % 3) * 1000),
+      })),
+    });
+    const events = await collectRankedEvents(trackId, Date.now(), db);
+    const skips = events.filter((e) => e.type === "EARLY_SKIP_PLAYLIST");
+    expect(skips).toHaveLength(8); // at most one per UTC day
+    expect(skips.every((e) => e.reputation === 0.5)).toBe(true); // the owner's reputation, not 1.0
+    expect(new Set(skips.map((e) => e.actorId))).toEqual(new Set([actor.id]));
+  });
+
+  it("one owner with 50 playlists holding the same track yields exactly one PLAYLIST_ADD, scaled by reputation", async () => {
+    const trackId = await mkPlayableTrack("multi-add");
+    const owner = await mkUser(`owner-${Date.now()}@test.example`, 0.4);
+    for (let i = 0; i < 50; i++) {
+      const playlist = await db.playlist.create({ data: { ownerId: owner.id, name: `pl-${i}`, visibility: "PUBLIC" } });
+      await db.playlistItem.create({ data: { playlistId: playlist.id, trackId, position: 0 } });
+    }
+    const events = await collectRankedEvents(trackId, Date.now(), db);
+    const adds = events.filter((e) => e.type === "PLAYLIST_ADD");
+    expect(adds).toHaveLength(1);
+    expect(adds[0].reputation).toBe(0.4);
+    expect(adds[0].actorId).toBe(owner.id);
+  });
+
+  it("20 parallel closeSession calls produce exactly one ListenEvent (atomic close, H-307 task 3)", async () => {
+    const trackId = await mkPlayableTrack("race-close");
+    const user = await mkUser(`closer-${Date.now()}@test.example`, 1.0);
+    const session = await db.listenSession.create({
+      data: { userId: user.id, trackId, mode: "PLAYLIST", startedAt: new Date(), lastBeatAt: new Date(), verifiedMs: 42_000, completed: true },
+    });
+    await Promise.all(
+      Array.from({ length: 20 }, () => closeSession(session.id, { skipped: false, now: new Date(), client: db })),
+    );
+    const events = await db.listenEvent.findMany({ where: { trackId } });
+    expect(events).toHaveLength(1);
+    const closed = await db.listenSession.findUniqueOrThrow({ where: { id: session.id } });
+    expect(closed.closedAt).not.toBeNull();
+  });
+
+  it("the 4th concurrent open session of one actor closes the oldest as lapsed (H-307 task 5)", async () => {
+    const trackId = await mkPlayableTrack("cap-sessions");
+    const user = await mkUser(`binger-${Date.now()}@test.example`, 1.0);
+    const started: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const { sessionId } = await startListenSession(
+        { trackId, mode: "PLAYLIST" },
+        { userId: user.id, anonHash: null },
+        { client: db as never, now: () => new Date(Date.now() + i * 1000) },
+      );
+      started.push(sessionId);
+    }
+    const sessions = await db.listenSession.findMany({ where: { id: { in: started } }, orderBy: { startedAt: "asc" } });
+    expect(sessions[0].closedAt).not.toBeNull(); // the oldest closed as lapsed
+    expect(sessions.slice(1).every((s) => s.closedAt === null)).toBe(true); // the newest 3 stay open
+    // The lapsed session wrote its ListenEvent (no skip penalty).
+    const events = await db.listenEvent.findMany({ where: { trackId } });
+    expect(events).toHaveLength(1);
+    expect(events[0].skippedEarly).toBe(false);
+  });
+
+  it("the 11th playlist create and the 61st add-item in an hour answer 429 with Retry-After (H-307 task 2)", async () => {
+    const creator = await mkUser(`creator-${Date.now()}@test.example`, 1.0);
+    const token = `tok-h307-${creator.id}`;
+    await db.session.create({ data: { userId: creator.id, sessionToken: token, expires: new Date(Date.now() + 86_400_000) } });
+    const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
+
+    const { POST: createPOST } = await import("@/app/api/playlists/route");
+    let lastCreate = 0;
+    for (let i = 0; i < 11; i++) {
+      const res = await createPOST(
+        new Request("http://localhost:3000/api/playlists", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "http://localhost:3000", ...cookie },
+          body: JSON.stringify({ name: `pl-${i}` }),
+        }) as never,
+        undefined as never,
+      );
+      lastCreate = res.status;
+      if (res.status === 429) expect(res.headers.get("retry-after")).toBeTruthy();
+    }
+    expect(lastCreate).toBe(429);
+    expect(await db.playlist.count({ where: { ownerId: creator.id } })).toBe(10);
+
+    // 60 successful adds (distinct tracks), the 61st answers 429.
+    const playlist = await db.playlist.findFirstOrThrow({ where: { ownerId: creator.id } });
+    const trackIds: string[] = [];
+    for (let i = 0; i < 61; i++) trackIds.push(await mkPlayableTrack(`addable-${i}`));
+    const { POST: addPOST } = await import("@/app/api/playlists/[id]/items/route");
+    let lastAdd = 0;
+    for (let i = 0; i < 61; i++) {
+      const res = await addPOST(
+        new Request(`http://localhost:3000/api/playlists/${playlist.id}/items`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "http://localhost:3000", ...cookie },
+          body: JSON.stringify({ trackId: trackIds[i] }),
+        }) as never,
+        { params: Promise.resolve({ id: playlist.id }) } as never,
+      );
+      lastAdd = res.status;
+      if (res.status === 429) expect(res.headers.get("retry-after")).toBeTruthy();
+    }
+    expect(lastAdd).toBe(429);
+    expect(await db.playlistItem.count({ where: { playlistId: playlist.id } })).toBe(60);
+  }, 60_000);
+
+  it("10 000 listen events recompute in under 1 s (per-actor counters, canonical order)", async () => {
+    const trackId = await mkPlayableTrack("perf-10k");
+    const users = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => mkUser(`bulk-${i}-${Date.now()}@test.example`, 1.0)),
+    );
+    for (let chunk = 0; chunk < 10; chunk++) {
+      await db.listenEvent.createMany({
+        data: Array.from({ length: 1000 }, (_, i) => {
+          const n = chunk * 1000 + i;
+          const user = users[n % 10];
+          const day = Math.floor(n / 200); // several UTC days per user
+          return {
+            trackId,
+            userId: user.id,
+            mode: "PLAYLIST" as const,
+            msListened: 1000,
+            completed: n % 2 === 0,
+            skippedEarly: n % 2 === 1,
+            createdAt: new Date(Date.now() - day * 86_400_000 - i),
+          };
+        }),
+      });
+    }
+    expect(await db.listenEvent.count({ where: { trackId } })).toBe(10_000);
+    const t0 = performance.now();
+    const written = await recomputeTrackScores([trackId], Date.now(), { client: db });
+    const elapsed = performance.now() - t0;
+    expect(written).toBe(1);
+    expect(elapsed).toBeLessThan(1000);
+  }, 30_000);
 });

@@ -1,12 +1,14 @@
 // GET/POST /api/playlists (H-302): the caller's own playlists, and
 // playlist creation (50 per user, race-safe). Text goes through the
 // central textCheck hook (H-209) plus local validators.
+// H-307: per-user rate limit on create — 10 per hour, 429 + Retry-After.
 
 import { z } from "zod";
 import { route } from "@/server/http/handler";
 import { parseJson } from "@/server/http/parse";
 import { requireSession } from "@/server/guard";
-import { createPlaylist, listPlaylists } from "@/server/playlists/service";
+import { rateLimit, tooManyRequests } from "@/server/ratelimit";
+import { createPlaylist, listPlaylists, PLAYLIST_CREATE_LIMIT } from "@/server/playlists/service";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,8 @@ export const GET = route(async (req) => {
 
 export const POST = route(async (req) => {
   const { user } = await requireSession(req);
+  const limit = await rateLimit({ key: `pl:create:${user.id}`, ...PLAYLIST_CREATE_LIMIT });
+  if (!limit.ok) return tooManyRequests(limit.retryAfterSec, "pl-create");
   const body = await parseJson(req, playlistCreateSchema);
   const { id } = await createPlaylist(user.id, body);
   return Response.json({ id }, { status: 201 });

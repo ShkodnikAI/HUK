@@ -169,13 +169,19 @@ legal orders. Contact address and a DMCA agent designation are launch gates.
 ## 9. Reactions, listen events and rankings
 
 Signals per (user, track): `LIKE` (public count), `DISLIKE` (never shown,
-used only internally), playlist-add (strong +), completion ratio, repeat plays,
-early skip in playlist mode (−). A vote or comment is accepted only after ≥ 30 s
-of server-verified listening.
+used only internally), playlist-add (strong +; at most one per owner per
+track, weighted by the owner's reputation), completion ratio, repeat plays,
+early skip in playlist mode (−; signed-in listeners only, at most one per
+track per UTC day, weighted by the listener's reputation; anonymous
+listeners never contribute negative signals). Open listen sessions per actor
+are capped at 3 — starting a further one closes the oldest as lapsed. A vote
+or comment is accepted only after ≥ 30 s of server-verified listening.
 
 Score (pure functions in `src/server/ranking/`):
 1. weight each event: base(type) × user reputation × `exp(−ln2·age/halfLife)`,
-   half-life 7 days for the weekly chart;
+   half-life 7 days for the weekly chart; the summation order is canonical
+   (events sorted by creation time and id), so the score is bit-identical
+   regardless of the database read order;
 2. sum weighted positives P and negatives N; `p̂ = P/(P+N)`, `n = P+N`;
 3. `score = wilsonLowerBound(p̂, n, z=1.96)` (continuity-corrected for small n);
 4. entry threshold: ≥ 10 distinct voters in the window;

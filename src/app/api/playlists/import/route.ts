@@ -6,7 +6,8 @@ import { z } from "zod";
 import { route } from "@/server/http/handler";
 import { parseJson } from "@/server/http/parse";
 import { requireSession } from "@/server/guard";
-import { importPlaylist, MAX_IMPORT_IDS } from "@/server/playlists/service";
+import { rateLimit, tooManyRequests } from "@/server/ratelimit";
+import { importPlaylist, MAX_IMPORT_IDS, PLAYLIST_CREATE_LIMIT } from "@/server/playlists/service";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,10 @@ export const importSchema = z.object({
 
 export const POST = route(async (req) => {
   const { user } = await requireSession(req);
+  // H-307: an import CREATES a playlist — the create rate limit applies to
+  // this path too (same-effect: the limit cannot be bypassed by importing).
+  const limit = await rateLimit({ key: `pl:create:${user.id}`, ...PLAYLIST_CREATE_LIMIT });
+  if (!limit.ok) return tooManyRequests(limit.retryAfterSec, "pl-create");
   const body = await parseJson(req, importSchema);
   const result = await importPlaylist(user.id, body);
   return Response.json(result, { status: 201 });
