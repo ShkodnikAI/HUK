@@ -218,6 +218,17 @@ with a daily ledger and an alert when 80% is spent. Observability: structured lo
 `/api/health`, uptime ping, error tracking (free tier), daily spend report.
 Backups: nightly `pg_dump` off-box, quarterly restore drill.
 
+Deployment preflight (H-306): **Database time zone** — every database session must
+run in UTC. The app appends the startup parameter `options=-c timezone=UTC` to
+`DATABASE_URL` for every pooled Prisma connection and the scheduler's advisory-lock
+connection, and web/worker verify the effective zone on their first connection
+(`SHOW timezone`) and refuse to start otherwise. Schedule columns are `timestamp
+without time zone` storing UTC wall clock; a database whose default zone is not UTC
+(a native install, a managed service) used to shift the whole timeline (the station
+went silent) and the moderation claim expiry before H-306. Do not "fix" this by
+changing the server clock expectations — keep the URL mechanism intact and let the
+boot check speak.
+
 ## 12. Out of scope (deliberate)
 
 User audio hosting, ads, payouts, voice/DJ, DMs, live ingest (Icecast), native
