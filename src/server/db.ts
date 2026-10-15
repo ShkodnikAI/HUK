@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { loadEnv } from "@/server/env";
+import { withUtcTimeZone } from "@/server/db-url";
 
 // Prisma client singleton (H-101).
 //
@@ -17,7 +18,12 @@ const globalForDb = globalThis as unknown as { __hukPrisma?: PrismaClient };
 
 function createClient(): PrismaClient {
   const env = loadEnv();
-  return new PrismaClient({ datasourceUrl: env.DATABASE_URL });
+  // H-306: every pooled connection this client ever opens carries the
+  // startup-packet parameter `options=-c timezone=UTC` (src/server/db-url.ts
+  // explains why the session zone is load-bearing for naive timestamp
+  // columns). The datasource URL is the single choke point — there is no
+  // Prisma connection in the codebase that bypasses this constructor.
+  return new PrismaClient({ datasourceUrl: withUtcTimeZone(env.DATABASE_URL) });
 }
 
 export const db: PrismaClient = new Proxy({} as PrismaClient, {

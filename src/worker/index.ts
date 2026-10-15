@@ -3,6 +3,7 @@
 // via pg_try_advisory_lock), exit cleanly on SIGTERM with the lock released.
 
 import { loadEnv } from "@/server/env";
+import { verifyDatabaseTimeZone, DatabaseTimeZoneError } from "@/server/db-timezone";
 import { startScheduler } from "@/server/broadcast/scheduler";
 import { makeMaintenanceJobs } from "@/server/maintenance/jobs";
 import { startMaintenance } from "@/server/maintenance/runner";
@@ -14,6 +15,25 @@ import { makeRankingJobs } from "@/server/ranking/job";
 const env = loadEnv();
 
 console.log(`[worker] booted pid=${process.pid} inviteOnly=${env.INVITE_ONLY}`);
+
+// H-306 (S9): the effective database session time zone must be UTC — the
+// mechanism (src/server/db-url.ts) pins every pooled connection; this boot
+// check proves it on the first connection and refuses to start otherwise.
+// A wrong zone previously produced a silent station and shifted moderation
+// claim expiry on non-UTC databases.
+try {
+  await verifyDatabaseTimeZone();
+} catch (error) {
+  if (error instanceof DatabaseTimeZoneError) {
+    console.error(error.message);
+    process.exit(1);
+  }
+  // A briefly unreachable database is not the time-zone contract: the
+  // scheduler and the passes log their failures per tick. Log and continue.
+  console.error(
+    `[worker] database time-zone check could not run: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
 
 // S3 (H-202): remove moderation temp dirs a crashed previous run left behind.
 const swept = sweepStaleTempFiles();

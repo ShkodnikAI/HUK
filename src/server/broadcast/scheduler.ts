@@ -7,6 +7,7 @@
 import { Client } from "pg";
 import { loadEnv, type Env } from "@/server/env";
 import { db } from "@/server/db";
+import { withUtcTimeZone } from "@/server/db-url";
 import { fillSlots, NO_REPEAT_MS, NO_REPEAT_TRACKS, type PoolName, type Rng } from "./timeline";
 
 /** Dedicated advisory-lock key for the broadcast timeline (arbitrary, stable). */
@@ -118,8 +119,13 @@ export function startScheduler(opts: SchedulerOptions = {}): SchedulerHandle {
   });
 
   async function acquireLock(): Promise<boolean> {
-    const client = new Client({ connectionString: env.DATABASE_URL });
+    // H-306: this dedicated connection is not part of the Prisma pool, so it
+    // gets the same time-zone mechanism from the URL, plus an explicit SET as
+    // the authoritative per-connection guarantee (the advisory lock and every
+    // query this client runs must share the UTC session contract).
+    const client = new Client({ connectionString: withUtcTimeZone(env.DATABASE_URL) });
     await client.connect();
+    await client.query("SET TIME ZONE 'UTC'");
     const res = await client.query("SELECT pg_try_advisory_lock($1) AS ok", [BROADCAST_LOCK_KEY]);
     if (res.rows[0]?.ok === true) {
       lockClient = client;

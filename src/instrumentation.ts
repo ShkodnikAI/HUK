@@ -35,4 +35,24 @@ export async function register(): Promise<void> {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
   }
+
+  // H-306 (S9): after the env contract, verify the database time-zone
+  // contract — the effective session zone must be UTC (the mechanism in
+  // src/server/db-url.ts pins it on every pooled connection). A wrong zone
+  // used to produce a silent station on non-UTC databases; refuse to start.
+  const { verifyDatabaseTimeZone, DatabaseTimeZoneError } = await import("@/server/db-timezone");
+  try {
+    await verifyDatabaseTimeZone();
+  } catch (error) {
+    if (error instanceof DatabaseTimeZoneError) {
+      console.error(error.message);
+      process.exit(1);
+    }
+    // A briefly unreachable database is not the time-zone contract: routes
+    // fail closed per request and /api/health reports the outage. Log and
+    // keep booting.
+    console.error(
+      `[boot] database time-zone check could not run: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
