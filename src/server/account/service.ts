@@ -1,17 +1,23 @@
-// Account export and deletion (H-214, S7): the caller's own data in one
-// JSON document, and the erase-on-request path. Deletion anonymises the
-// user (email → deleted-<id>@invalid.local, name and image cleared,
-// deletedAt set, role LISTENER), deletes sessions, accounts and
+// Account export and deletion (H-214, S7; completeness H-308): the caller's
+// own data in one JSON document, and the erase-on-request path. Deletion
+// anonymises the user (email → deleted-<id>@invalid.local, name and image
+// cleared, deletedAt set, role LISTENER), deletes sessions, accounts and
 // verification tokens, playlists, reactions and comment authorship (the
-// text replaced by a placeholder), and the artist profile; every own track
-// goes through takedownTrack("author-withdrew", H-206/H-212). Consent rows
-// are kept — they prove what was accepted and hold only a hash, no raw IP.
-// AuditLog keeps account.deleted with the user id only, never the email.
+// text replaced by a placeholder), the artist profile, EVERY row still
+// keyed to the user in ListenEvent, ListenSession and VoteFlag, the invites
+// they created (createdById is NOT NULL — they cannot be kept keyless),
+// nulls the invite they redeemed (usedById) and the report contact
+// (reporterId/reporterContact → null; the report itself survives for
+// moderation); every own track goes through takedownTrack
+// ("author-withdrew", H-206/H-212). Consent rows are kept — they prove
+// what was accepted and hold only the user id, no raw IP. AuditLog keeps
+// account.deleted with the user id only, never the email.
 //
-// Scores: removing reactions changes the affected tracks' scores — their
-// TrackScore rows are dropped in the same transaction, so the next ranking
-// pass (H-304, within ~10 minutes of the worker running) recomputes them
-// from the remaining signals. Say so wherever the deletion is documented.
+// Scores: removing reactions AND listen events changes the affected
+// tracks' scores — their TrackScore rows are dropped in the same
+// transaction, so the next ranking pass (H-304, within ~10 minutes of the
+// worker running) recomputes them from the remaining signals. Say so
+// wherever the deletion is documented.
 
 import { z } from "zod";
 import { HttpError } from "@/server/http/errors";
@@ -44,7 +50,7 @@ export async function exportUserData(user: User, seam: AccountSeam = {}): Promis
   const now = seam.now ?? (() => new Date());
   const retentionCutoff = new Date(now().getTime() - LISTEN_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
-  const [artistProfile, tracks, consents, playlists, reactions, comments, listenEvents, reports] = await Promise.all([
+  const [artistProfile, tracks, consents, playlists, reactions, comments, listenEvents, listenSessions, voteFlags, reports] = await Promise.all([
     client.artistProfile.findUnique({ where: { userId: user.id } }),
     client.track.findMany({
       where: { artist: { userId: user.id } },
@@ -66,6 +72,13 @@ export async function exportUserData(user: User, seam: AccountSeam = {}): Promis
       where: { userId: user.id, createdAt: { gte: retentionCutoff } },
       orderBy: { createdAt: "asc" },
     }),
+    // H-308 (export parity): every table that holds rows of this user is
+    // exported — the listen sessions, the vote flags and the reporter
+    // contact are part of the person's data. AuditLog is intentionally
+    // absent (user id only, internal accountability); Consent rows are
+    // exported below; both stay after erasure by design.
+    client.listenSession.findMany({ where: { userId: user.id }, orderBy: { startedAt: "asc" } }),
+    client.voteFlag.findMany({ where: { userId: user.id }, orderBy: { createdAt: "asc" } }),
     client.report.findMany({ where: { reporterId: user.id }, orderBy: { createdAt: "asc" } }),
   ]);
 
@@ -135,10 +148,27 @@ export async function exportUserData(user: User, seam: AccountSeam = {}): Promis
       skippedEarly: e.skippedEarly,
       createdAt: e.createdAt.toISOString(),
     })),
+    // H-308: closed listen sessions are purged after 48 h (H-210) and raw
+    // listen events after the retention window — the export covers whatever
+    // still exists; what is gone was already deleted by retention.
+    listenSessions: listenSessions.map((s) => ({
+      trackId: s.trackId,
+      mode: s.mode,
+      msListened: s.verifiedMs,
+      completed: s.completed,
+      startedAt: s.startedAt.toISOString(),
+      closedAt: s.closedAt?.toISOString() ?? null,
+    })),
+    voteFlags: voteFlags.map((f) => ({
+      trackId: f.trackId,
+      reason: f.reason,
+      createdAt: f.createdAt.toISOString(),
+    })),
     reports: reports.map((r) => ({
       id: r.id,
       targetType: r.targetType,
       targetId: r.targetId,
+      reporterContact: r.reporterContact,
       reason: r.reason,
       category: r.category,
       status: r.status,
@@ -154,10 +184,15 @@ const ANONYMISED_COMMENT_BODY = "[removed]";
  * Erases the account. The takedowns run first (each atomic, with the
  * H-212 retire-from-air inside), then the single erasure transaction:
  * sessions, accounts, verification tokens, playlists, reactions, comment
- * authorship (authorId null, text placeholder), the artist profile, and
- * the anonymisation of the user row itself. Consent rows are kept.
- * Score rows of every track whose signals change are dropped so the next
- * ranking pass recomputes them (H-304).
+ * authorship (authorId null, text placeholder), the artist profile, every
+ * ListenEvent / ListenSession / VoteFlag row of the user, the invites they
+ * created (deleted — createdById is NOT NULL) and the invite they redeemed
+ * (usedById → null), the report contact (reporterId/reporterContact →
+ * null; the report stays for moderation), and the anonymisation of the
+ * user row itself. Consent rows are kept (by design, no raw IP).
+ * Score rows of every track whose signals change (reactions, listen
+ * events, own tracks) are dropped so the next ranking pass recomputes
+ * them (H-304/H-305/H-307).
  */
 export async function deleteAccount(
   user: User,
@@ -188,12 +223,36 @@ export async function deleteAccount(
   const reactedTrackIds = (
     await client.reaction.findMany({ where: { userId: user.id }, select: { trackId: true } })
   ).map((r) => r.trackId);
+  // H-308: deleting listen events changes scores too — those tracks join
+  // the same TrackScore drop (task 4).
+  const listenedTrackIds = (
+    await client.listenEvent.findMany({ where: { userId: user.id }, select: { trackId: true }, distinct: ["trackId"] })
+  ).map((r) => r.trackId);
   await client.$transaction(async (tx) => {
     await tx.session.deleteMany({ where: { userId: user.id } });
     await tx.account.deleteMany({ where: { userId: user.id } });
     await tx.verificationToken.deleteMany({ where: { identifier: user.email } });
     await tx.playlist.deleteMany({ where: { ownerId: user.id } });
     await tx.reaction.deleteMany({ where: { userId: user.id } });
+    // H-308 (task 1): every remaining row keyed to the user goes away —
+    // raw listening, open/closed sessions, anti-fraud vote flags.
+    await tx.listenEvent.deleteMany({ where: { userId: user.id } });
+    await tx.listenSession.deleteMany({ where: { userId: user.id } });
+    await tx.voteFlag.deleteMany({ where: { userId: user.id } });
+    // H-308: the reports survive moderation, keyless and contactless
+    // (the FK would only fire on user DELETE, but the row is anonymised,
+    // never deleted — so both columns are nulled explicitly).
+    await tx.report.updateMany({
+      where: { reporterId: user.id },
+      data: { reporterId: null, reporterContact: null },
+    });
+    // H-308, invite decision: invites the user CREATED are deleted —
+    // createdById is NOT NULL, so nulling would weaken the constraint, and
+    // the code hash of an erased account's invite is worthless operational
+    // data. The invite they REDEEMED survives with usedById = NULL (it
+    // carries no personal data once the user is anonymised).
+    await tx.artistInvite.deleteMany({ where: { createdById: user.id } });
+    await tx.artistInvite.updateMany({ where: { usedById: user.id }, data: { usedById: null } });
     await tx.comment.updateMany({
       where: { authorId: user.id },
       data: { authorId: null, body: ANONYMISED_COMMENT_BODY },
@@ -201,9 +260,9 @@ export async function deleteAccount(
     if (profile) {
       await tx.artistProfile.delete({ where: { id: profile.id } }); // the tracks' artistId falls to SetNull
     }
-    // Scores that the removed reactions and the takedowns invalidate:
-    // dropped here, recomputed by the next ranking pass (H-304/H-305).
-    const affected = [...new Set([...reactedTrackIds, ...ownTrackIds])];
+    // Scores that the removed reactions, listen events and the takedowns
+    // invalidate: dropped here, recomputed by the next ranking pass.
+    const affected = [...new Set([...reactedTrackIds, ...listenedTrackIds, ...ownTrackIds])];
     if (affected.length > 0) {
       await tx.trackScore.deleteMany({ where: { trackId: { in: affected } } });
     }
@@ -234,6 +293,6 @@ export async function deleteAccount(
   return {
     deleted: true,
     scoresNote:
-      "Scores affected by the removed reactions are recomputed by the next ranking pass (H-304); charts and the air refill from the remaining signals.",
+      "Scores affected by the removed reactions and listen events are recomputed by the next ranking pass (H-304); charts and the air refill from the remaining signals.",
   };
 }

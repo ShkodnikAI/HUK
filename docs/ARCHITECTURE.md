@@ -88,7 +88,20 @@ Retention (enforced by worker jobs, configurable by env):
 | Transcripts in `ModerationRun.payload` | 90 days |
 | IP hashes (rotating salt) | 24 h salt rotation; no raw IP stored |
 | `AuditLog`, `Report` | 24 months |
+| `ListenSession` closed rows | 48 h, then deleted (H-210) |
 | Deleted account | profile erased; comments anonymised ("deleted user") |
+
+Account erasure completeness (H-308): after the erase-on-request path the old
+user id appears in exactly two places — `AuditLog` (`account.deleted`, the id
+only) and `Consent` (kept by design: what document version was accepted; no
+raw IP). Everything else keyed to the user is deleted (`ListenEvent`,
+`ListenSession`, `VoteFlag`, the invites they created — `createdById` is NOT
+NULL, so they cannot be kept keyless) or keyless (the invite they redeemed
+`usedById → null`; their reports survive moderation with `reporterId` and
+`reporterContact` nulled; comments keep the `[removed]` placeholder).
+`exportUserData` covers every table that holds the person's data, including
+listen sessions, vote flags and their own report contact; `AuditLog` is the
+one intentional export absence (internal accountability, user id only).
 
 ## 5. Broadcast timeline
 
