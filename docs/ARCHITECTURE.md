@@ -38,6 +38,18 @@ that alter a decision need an ADR (`docs/adr/`).
 Phase-1 stack: Docker Compose on one VPS (`web`, `worker`, `postgres`). Redis is
 added only when charts/listener counts need it (M scale). See ADR-0005.
 
+Deployment (H-504): production runs the standalone
+`deploy/docker-compose.prod.yml` (compose project `huk`) — `web`, `worker`,
+`postgres`, a `seed-audio` static server (nginx) and a `cloudflared` sidecar
+under the `tunnel` profile. The only published port is `web` on
+`127.0.0.1:${HUK_WEB_PORT:-3100}`: all public traffic enters through a
+Cloudflare Tunnel, so the host exposes nothing and the stack cannot clash with
+a neighbouring project. Ops scripts (`check-env.sh`, `up.sh`, `update.sh` with
+automatic rollback, `backup.sh`, `restore.sh`) and the deployment procedure
+live in `docs/RUNBOOK.md`. CI enforces the stack invariants
+(`scripts/ci/check-prod-compose.mjs`) and replays a full production drill
+(`deploy-smoke` job) on every PR.
+
 ## 3. Repository layout
 
 ```
