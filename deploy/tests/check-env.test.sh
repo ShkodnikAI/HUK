@@ -73,6 +73,15 @@ expect_fail "$TMP/variant.env" "empty AUTH_SECRET is refused"
 variant IP_HASH_SALT "huk-dev-ip-hash-salt-do-not-use-in-prod"
 expect_fail "$TMP/variant.env" "dev IP_HASH_SALT is refused"
 
+# 3a. POSTGRES_PASSWORD not URL-safe: a base64 `/` breaks the DATABASE_URL the
+#     compose file interpolates (prisma P1013, caught by the deploy drill).
+variant POSTGRES_PASSWORD "base64/with/slashes-42"
+expect_fail "$TMP/variant.env" "non-URL-safe POSTGRES_PASSWORD is refused"
+
+# 3b. a URL-safe hex password passes the same gate
+variant POSTGRES_PASSWORD "4f1c9b2e7a5d3f806c2e1b9a7d5f3c48"
+expect_ok "$TMP/variant.env" "URL-safe hex POSTGRES_PASSWORD passes"
+
 # 4. http URL (NEXTAUTH_URL)
 variant NEXTAUTH_URL "http://hukradio.com"
 expect_fail "$TMP/variant.env" "http:// NEXTAUTH_URL is refused"
