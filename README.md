@@ -30,6 +30,7 @@ themselves — with AI-assisted moderation and transparent, deterministic charts
 | [`docs/LEGAL.md`](docs/LEGAL.md) | Legal assumptions and questions for counsel |
 | [`docs/adr/`](docs/adr/) | Architecture decision records |
 | [`policy/moderation-policy.md`](policy/moderation-policy.md) | What is and is not allowed |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Production deployment on the Owner's host: preflight, Cloudflare Tunnel, Docker Hub, SMTP, backups, kill switch |
 
 ## Stack
 Next.js 16 (App Router) · TypeScript (strict) · Tailwind 4 + shadcn/ui tokens · zod-validated env ·
@@ -80,7 +81,12 @@ magic-link testing on a laptop run bare `next dev` (development mode allows http
 environment — the dev defaults must never reach production (S8 fails loud at boot
 otherwise). CI proves the stack on every PR and on `main` with the `docker-smoke` job
 (images build, both containers run as non-root, `/api/health` and `/api/radio/now`
-answer 200, the worker stops cleanly on SIGTERM).
+answer 200, the worker stops cleanly on SIGTERM). Production deployments must
+not use the dev stack at all: they run the standalone
+`deploy/docker-compose.prod.yml` (project `huk`, loopback-only port, Cloudflare
+Tunnel sidecar, ops scripts with automatic rollback) — the full procedure is
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md), and CI replays the production drill
+(`deploy-smoke`) on every PR.
 
 ## Contributing
 Work happens through naryads: open an issue from the *Naryad* template that references a card in
