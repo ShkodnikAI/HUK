@@ -1,0 +1,51 @@
+# deploy/tests/bad-compose.fixture.yml (H-504, task 7) — a deliberately
+# broken stack. CI renders it and feeds it to scripts/ci/check-prod-compose.mjs,
+# which MUST reject it (the invariants step fails if the checker accepts this
+# file). A checker that cannot fail is not a check.
+#
+# Violations baked in (one per class the real compose must never exhibit):
+#   - postgres publishes 5432 to all interfaces
+#   - web publishes 3000 without the 127.0.0.1 host IP
+#   - dev Postgres password `huk`
+#   - dev IP_HASH_SALT (H-103)
+#   - NEXTAUTH_URL over http and on localhost (H-110)
+#   - EMAIL_FROM still on the application default @example.com
+#   - EMAIL_SERVER pointing at the dev mailpit sink
+#   - worker running privileged
+#   - empty Cloudflare tunnel token
+# Literal values only: this file must render with `docker compose config`
+# without any env file, so the drill proves the CHECKER rejects it (not that
+# compose failed to interpolate).
+
+name: huk
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: huk
+      POSTGRES_PASSWORD: huk
+      POSTGRES_DB: huk
+    ports:
+      - "5432:5432"
+
+  web:
+    image: huk/huk-web:latest
+    environment:
+      NODE_ENV: production
+      NEXTAUTH_URL: http://localhost:3000
+      IP_HASH_SALT: huk-dev-ip-hash-salt-do-not-use-in-prod
+      EMAIL_FROM: "HUK <no-reply@example.com>"
+      EMAIL_SERVER: smtp://mailpit:1025
+    ports:
+      - "3000:3000"
+
+  worker:
+    image: huk/huk-worker:latest
+    privileged: true
+
+  cloudflared:
+    image: cloudflare/cloudflared:2025.9.1
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ""
