@@ -276,10 +276,15 @@ chmod 600 deploy/.env          # it must already be git-ignored; belt and braces
 Fill every empty value. Generate the secrets locally (never reuse them):
 
 ```bash
-openssl rand -base64 24   # POSTGRES_PASSWORD
-openssl rand -base64 32   # AUTH_SECRET
-openssl rand -base64 24   # IP_HASH_SALT
+openssl rand -hex 16     # POSTGRES_PASSWORD — hex, NOT base64: the compose
+                         # file embeds it into DATABASE_URL, and a base64
+                         # `/` or `@` breaks the URL (prisma P1013)
+openssl rand -base64 32  # AUTH_SECRET (never embedded into a URL)
+openssl rand -base64 24  # IP_HASH_SALT (never embedded into a URL)
 ```
+
+`deploy/check-env.sh` refuses a `POSTGRES_PASSWORD` with any character outside
+`[A-Za-z0-9._~-]` for exactly this reason.
 
 Domain-tied values are already fixed by the example:
 `NEXTAUTH_URL="https://hukradio.com"`, `EMAIL_FROM="HUK <no-reply@hukradio.com>"`,

@@ -66,7 +66,13 @@ v=$(get AUTH_SECRET)
 
 v=$(get POSTGRES_PASSWORD)
 [ "$v" != "huk" ] || bad "POSTGRES_PASSWORD is the dev default 'huk'"
-[ ${#v} -ge 16 ] || bad "POSTGRES_PASSWORD must be at least 16 chars (openssl rand -base64 24)"
+[ ${#v} -ge 16 ] || bad "POSTGRES_PASSWORD must be at least 16 chars (openssl rand -hex 16)"
+# The compose file interpolates this password into DATABASE_URL — a character
+# outside the URL-unreserved set (base64 `/`, `+`, `=`, or any `@:?#%`) breaks
+# the URL at boot (prisma P1013, seen in CI). Refuse it here, loudly.
+case "$v" in
+  *[!A-Za-z0-9._~-]*) bad "POSTGRES_PASSWORD must be URL-safe ([A-Za-z0-9._~-]) — it is embedded into DATABASE_URL (generate: openssl rand -hex 16)" ;;
+esac
 
 v=$(get IP_HASH_SALT)
 [ "$v" != "huk-dev-ip-hash-salt-do-not-use-in-prod" ] || bad "IP_HASH_SALT is the dev default (H-103)"

@@ -200,7 +200,9 @@ jobs:
           cd deploy
           cat > .env <<EOF
           POSTGRES_USER="huk"
-          POSTGRES_PASSWORD="$(openssl rand -base64 24)"
+          # hex, not base64: the password is interpolated into DATABASE_URL by
+          # the compose file — a base64 `/` or `@` breaks the URL (P1013).
+          POSTGRES_PASSWORD="$(openssl rand -hex 16)"
           POSTGRES_DB="huk"
           AUTH_SECRET="$(openssl rand -base64 32)"
           NEXTAUTH_URL="https://hukradio.com"
