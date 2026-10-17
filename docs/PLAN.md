@@ -50,16 +50,18 @@ published only after the record is on `main`. Where a published issue differs fr
 | H-215 | #85 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
 | H-216 | #86 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
 | H-217 | #87 | W3 (moderation line) | PARKED 2026-10-09 (Owner) |
-| H-504 | #89 | pulled forward from W5 (Owner, 2026-10-09) | open |
+| H-504 | #89 | pulled forward from W5 (Owner, 2026-10-09) | merged (PRs #116, #117); accepted with follow-ups 2026-10-16 (H-310); real-host deploy waits on the Docker Hub question (Owner, D1) |
 | H-112 | #90 | critical path (Owner, 2026-10-09, D14) | merged (PR #95); accepted at gate W3 (2026-10-10) |
-| H-120 | #91 | critical path: UI (Owner, 2026-10-09) | open |
-| H-121 | #92 | critical path: UI | open, after H-120 |
-| H-122 | #93 | critical path: UI | open, after H-120 |
-| H-123 | #94 | critical path: UI, lyrics | open, after H-120 |
-| H-306 | #103 | W3 follow-up (gate W3, finding H9, found by the Owner's first local run) | open, P0 |
-| H-307 | #104 | W3 follow-up (gate W3, H1, H2, H4, H5, H8) | open, P1 |
-| H-308 | #105 | W3 follow-up (gate W3, H3, S7) | open, P1 |
-| H-309 | #106 | W3 follow-up (gate W3, H6, H7, instrumentation warning) | open, P2 |
+| H-120 | #91 | critical path: UI (Owner, 2026-10-09) | merged (PR #112); accepted 2026-10-16 |
+| H-121 | #92 | critical path: UI | merged (PR #113); accepted 2026-10-16 |
+| H-122 | #93 | critical path: UI | merged (PR #114); accepted 2026-10-16 |
+| H-123 | #94 | critical path: UI, lyrics | merged (PR #115); accepted 2026-10-16 (lyrics erasure: H-311) |
+| H-306 | #103 | W3 follow-up (gate W3, finding H9, found by the Owner's first local run) | merged (PR #108); accepted 2026-10-16 |
+| H-307 | #104 | W3 follow-up (gate W3, H1, H2, H4, H5, H8) | merged (PR #109); accepted 2026-10-16 |
+| H-308 | #105 | W3 follow-up (gate W3, H3, S7) | merged (PR #110); accepted 2026-10-16 (lyrics gap: H-311) |
+| H-309 | #106 | W3 follow-up (gate W3, H6, H7, instrumentation warning) | merged (PR #111); accepted 2026-10-16 |
+| H-310 | #119 | post-W3 audit (G1, G3, G4) | open, P1 |
+| H-311 | #120 | post-W3 audit (G2, S7) | open, P1 |
 
 ---
 
