@@ -13,7 +13,6 @@ set -eu
 # password must be handed to libpq explicitly (the compose stack exec'd into
 # the postgres container over the local socket instead).
 export PGPASSWORD="$POSTGRES_PASSWORD"
-PGUSER_OPT="-U $POSTGRES_USER"
 PGDB="${POSTGRES_DB:-huk}"
 
 umask 077
@@ -22,7 +21,7 @@ mkdir -p /backups/daily /backups/weekly
 stamp=$(date -u +%Y%m%d-%H%M%S)
 out="/backups/daily/huk-$stamp.dump"
 
-pg_dump $PGUSER_OPT -d "$PGDB" -Fc > "$out"
+pg_dump -U "$POSTGRES_USER" -d "$PGDB" -Fc > "$out"
 if [ ! -s "$out" ]; then
   rm -f "$out"
   echo "FAIL: pg_dump produced an empty file — backup aborted" >&2
