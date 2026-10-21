@@ -1,0 +1,8 @@
+# Full production stack: everything from prod-no-tunnel (namespace, release
+# image tags, production PVC sizes) plus the cloudflared sidecar component.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../prod-no-tunnel
+components:
+  - ../../components/tunnel

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audio-cache
+  labels:
+    app.kubernetes.io/name: huk
+    app.kubernetes.io/component: audio-cache
+spec:
+  # H-112 (D14): the worker writes the broadcast cache, web serves it
+  # read-only. On the single-node cluster both pods land on the same node, so
+  # ReadWriteOnce (node-scoped access) is sufficient for both mounts.
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi            # AUDIO_CACHE_MAX_BYTES default is 400 MB

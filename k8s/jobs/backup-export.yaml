@@ -1,0 +1,61 @@
+# Backup export pod (RUNBOOK §9): off-box copies of the pg_dump archive.
+#
+# The backups live on the backup-data PVC inside the cluster; a backup that
+# only exists on the same node as the database is not a real backup. This
+# helper Job mounts the PVC read-only for 2 hours so the dumps can be copied
+# to the operator's machine (and then to off-site storage):
+#   kubectl delete job huk-backup-export -n huk --ignore-not-found
+#   kubectl apply -f k8s/jobs/backup-export.yaml
+#   kubectl -n huk wait --for=condition=ready pod -l job-name=huk-backup-export --timeout=120s
+#   POD=$(kubectl -n huk get pod -l job-name=huk-backup-export -o jsonpath='{.items[0].metadata.name}')
+#   kubectl cp huk/"$POD":/backups/daily ./huk-backups-daily
+#   kubectl -n huk delete job huk-backup-export
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: huk-backup-export
+  namespace: huk
+  labels:
+    app.kubernetes.io/name: huk
+    app.kubernetes.io/component: backups
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: huk
+        app.kubernetes.io/component: backups
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: export
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "echo 'copy dumps out with kubectl cp, then delete this job'; sleep 7200"]
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 10m
+            limits:
+              memory: 64Mi
+              cpu: 100m
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: backups
+              mountPath: /backups
+              readOnly: true
+      volumes:
+        - name: backups
+          persistentVolumeClaim:
+            claimName: backup-data

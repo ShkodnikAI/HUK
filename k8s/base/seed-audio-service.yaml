@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: huk-seed-audio
+  labels:
+    app.kubernetes.io/name: huk
+    app.kubernetes.io/component: seed-audio
+spec:
+  # ClusterIP only: reached through the tunnel ingress (hukradio.com/seed*),
+  # never published to the host — same as the compose stack.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: huk
+    app.kubernetes.io/component: seed-audio
+  ports:
+    - name: http
+      port: 80
+      targetPort: http     # nginx listens on 8080 as a non-root user
