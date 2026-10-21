@@ -34,13 +34,22 @@ jobs:
           node scripts/ci/audio-store.mjs --selftest
       - name: Kustomize renders and passes the invariant checker (H-504, K8s)
         run: |
-          kubectl kustomize -o json k8s/overlays/prod > /tmp/k8s-prod.json
+          # kubectl kustomize -o json does NOT print to stdout (the flag is a
+          # filename for kustomize) — render YAML and convert explicitly.
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          render() {
+            kubectl kustomize "$1" > /tmp/k8s-render.yaml || exit 1
+            python3 -c 'import json,sys,yaml as y; json.dump([d for d in y.safe_load_all(open(sys.argv[1])) if d], open(sys.argv[2], "w"))' /tmp/k8s-render.yaml "$2" || exit 1
+          }
+          render k8s/overlays/prod /tmp/k8s-prod.json
           node scripts/ci/check-k8s-manifests.mjs /tmp/k8s-prod.json
-          kubectl kustomize -o json k8s/overlays/prod-no-tunnel > /tmp/k8s-notunnel.json
+          render k8s/overlays/prod-no-tunnel /tmp/k8s-notunnel.json
           node scripts/ci/check-k8s-manifests.mjs /tmp/k8s-notunnel.json
       - name: The same checker must reject a deliberately broken stack (H-504, K8s)
         run: |
-          kubectl kustomize -o json k8s/tests/bad > /tmp/k8s-bad.json
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          kubectl kustomize k8s/tests/bad > /tmp/k8s-bad.yaml || exit 1
+          python3 -c 'import json,sys,yaml as y; json.dump([d for d in y.safe_load_all(open(sys.argv[1])) if d], open(sys.argv[2], "w"))' /tmp/k8s-bad.yaml /tmp/k8s-bad.json || exit 1
           if node scripts/ci/check-k8s-manifests.mjs /tmp/k8s-bad.json; then
             echo "FAIL: the checker accepted a deliberately broken stack"
             exit 1
