@@ -9,9 +9,12 @@
 // nulls the invite they redeemed (usedById) and the report contact
 // (reporterId/reporterContact → null; the report itself survives for
 // moderation); every own track goes through takedownTrack
-// ("author-withdrew", H-206/H-212). Consent rows are kept — they prove
-// what was accepted and hold only the user id, no raw IP. AuditLog keeps
-// account.deleted with the user id only, never the email.
+// ("author-withdrew", H-206/H-212), and the artist's own lyrics are nulled
+// on every own track — all statuses — in the same erasure transaction
+// (H-311: personal creative text does not outlive the account). Consent
+// rows are kept — they prove what was accepted and hold only the user id,
+// no raw IP. AuditLog keeps account.deleted with the user id only, never
+// the email.
 //
 // Scores: removing reactions AND listen events changes the affected
 // tracks' scores — their TrackScore rows are dropped in the same
@@ -109,6 +112,9 @@ export async function exportUserData(user: User, seam: AccountSeam = {}): Promis
       status: track.status,
       language: track.language,
       instrumental: track.instrumental,
+      // H-311: the artist's own lyrics are part of their data — exported
+      // per track id, exactly as stored (null for instrumentals).
+      lyrics: track.lyrics,
       durationSec: track.durationSec,
       licenseScope: track.licenseScope,
       declarations: {
@@ -189,7 +195,9 @@ const ANONYMISED_COMMENT_BODY = "[removed]";
  * created (deleted — createdById is NOT NULL) and the invite they redeemed
  * (usedById → null), the report contact (reporterId/reporterContact →
  * null; the report stays for moderation), and the anonymisation of the
- * user row itself. Consent rows are kept (by design, no raw IP).
+ * user row itself. The artist's own lyrics are nulled on every own track
+ * (all statuses) inside the same transaction, before the profile is
+ * deleted (H-311, S7). Consent rows are kept (by design, no raw IP).
  * Score rows of every track whose signals change (reactions, listen
  * events, own tracks) are dropped so the next ranking pass recomputes
  * them (H-304/H-305/H-307).
@@ -256,6 +264,15 @@ export async function deleteAccount(
     await tx.comment.updateMany({
       where: { authorId: user.id },
       data: { authorId: null, body: ANONYMISED_COMMENT_BODY },
+    });
+    // H-311 (S7): the artist's own lyrics are personal creative text —
+    // nulled on EVERY own track, all statuses (a track already TAKEN_DOWN
+    // by moderation keeps nothing of the author either), inside the same
+    // erasure transaction, while the profile relation still resolves the
+    // set (the profile deletion below SetNulls the tracks' artistId).
+    await tx.track.updateMany({
+      where: { artist: { userId: user.id } },
+      data: { lyrics: null },
     });
     if (profile) {
       await tx.artistProfile.delete({ where: { id: profile.id } }); // the tracks' artistId falls to SetNull
