@@ -10,5 +10,6 @@ Status: Proposed → Accepted (owner) → Superseded. Accepted ADRs are not reop
 | 0002 | Authors keep audio; HUK stores links and hashes | Accepted |
 | 0003 | Moderation as a cost-ordered cascade, fail closed | Accepted |
 | 0004 | Timeline owned by a single worker; `/now` is a pure read | Accepted |
-| 0005 | Postgres-only first; one VPS with Docker Compose | Accepted |
+| 0005 | Postgres-only first; one VPS with Docker Compose | Superseded (orchestration part → ADR-0009) |
 | 0006 | Rankings are deterministic (Wilson + decay); AI audits | Accepted |
+| 0009 | Production orchestration on Kubernetes (the existing Rancher cluster) | Accepted |

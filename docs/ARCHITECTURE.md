@@ -38,17 +38,21 @@ that alter a decision need an ADR (`docs/adr/`).
 Phase-1 stack: Docker Compose on one VPS (`web`, `worker`, `postgres`). Redis is
 added only when charts/listener counts need it (M scale). See ADR-0005.
 
-Deployment (H-504): production runs the standalone
-`deploy/docker-compose.prod.yml` (compose project `huk`) — `web`, `worker`,
-`postgres`, a `seed-audio` static server (nginx) and a `cloudflared` sidecar
-under the `tunnel` profile. The only published port is `web` on
-`127.0.0.1:${HUK_WEB_PORT:-3100}`: all public traffic enters through a
-Cloudflare Tunnel, so the host exposes nothing and the stack cannot clash with
-a neighbouring project. Ops scripts (`check-env.sh`, `up.sh`, `update.sh` with
-automatic rollback, `backup.sh`, `restore.sh`) and the deployment procedure
-live in `docs/RUNBOOK.md`. CI enforces the stack invariants
-(`scripts/ci/check-prod-compose.mjs`) and replays a full production drill
-(`deploy-smoke` job) on every PR.
+Deployment (H-504, ADR-0009): production runs on Kubernetes — the
+Rancher-managed single-node cluster on the Owner's host — via the kustomize
+manifests in `k8s/` (namespace `huk`): `web`, `worker`, `postgres`
+(StatefulSet + PVC), a `seed-audio` static server (non-root nginx) and a
+`cloudflared` sidecar behind the tunnel component. Nothing is published to
+the host — every Service is ClusterIP-only and all public traffic enters
+through the Cloudflare Tunnel — so the stack cannot clash with the
+neighbouring project. The images are the same Dockerfile targets, built and
+imported on the host (no registry). Ops are kubectl-native: releases by
+retagging `overlays/prod-no-tunnel` and applying, automatic rollback via
+`rollout undo`, nightly pg_dump by the `huk-backup` CronJob onto a backup
+PVC, a restore-drill Job, and a scale-to-zero kill switch. CI enforces the
+stack invariants (`scripts/ci/check-k8s-manifests.mjs` over the rendered
+overlays) and replays a full production drill on a kind cluster
+(`deploy-smoke` job); the operating procedure lives in `docs/RUNBOOK.md`.
 
 ## 3. Repository layout
 
