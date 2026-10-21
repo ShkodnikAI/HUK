@@ -226,21 +226,22 @@ jobs:
           PW="$(openssl rand -hex 16)"
           mkdir -p k8s
           cat > k8s/.env <<EOF
-          POSTGRES_USER="huk"
-          POSTGRES_PASSWORD="$PW"
-          POSTGRES_DB="huk"
-          DATABASE_URL="postgresql://huk:$PW@huk-postgres:5432/huk"
-          AUTH_SECRET="$(openssl rand -base64 32)"
-          NEXTAUTH_URL="https://hukradio.com"
-          IP_HASH_SALT="$(openssl rand -base64 24)"
-          CLIENT_IP_HEADER="cf-connecting-ip"
-          EMAIL_SERVER="smtp://ci-smoke:ci-smoke@smtp.ci-smoke.invalid:587"
-          EMAIL_FROM="HUK <no-reply@hukradio.com>"
-          SEED_AUDIO_BASE_URL="https://hukradio.com/seed"
-          AUDIO_CACHE_DIR="/var/lib/huk/audio-cache"
-          AUDIO_CACHE_MAX_BYTES="419430400"
-          CLOUDFLARE_TUNNEL_TOKEN="ci-smoke-fake-tunnel-token-not-a-secret"
-          HUK_WEB_PORT="3100"
+          # bare KEY=value — kubectl --from-env-file keeps quotes literally
+          POSTGRES_USER=huk
+          POSTGRES_PASSWORD=$PW
+          POSTGRES_DB=huk
+          DATABASE_URL=postgresql://huk:$PW@huk-postgres:5432/huk
+          AUTH_SECRET=$(openssl rand -base64 32)
+          NEXTAUTH_URL=https://hukradio.com
+          IP_HASH_SALT=$(openssl rand -base64 24)
+          CLIENT_IP_HEADER=cf-connecting-ip
+          EMAIL_SERVER=smtp://ci-smoke:ci-smoke@smtp.ci-smoke.invalid:587
+          EMAIL_FROM=HUK <no-reply@hukradio.com>
+          SEED_AUDIO_BASE_URL=https://hukradio.com/seed
+          AUDIO_CACHE_DIR=/var/lib/huk/audio-cache
+          AUDIO_CACHE_MAX_BYTES=419430400
+          CLOUDFLARE_TUNNEL_TOKEN=ci-smoke-fake-tunnel-token-not-a-secret
+          HUK_WEB_PORT=3100
           EOF
           chmod 600 k8s/.env
           sh k8s/check-env.sh k8s/.env

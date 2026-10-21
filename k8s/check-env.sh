@@ -62,6 +62,15 @@ for k in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB DATABASE_URL AUTH_SECRET \
   [ -n "$(get "$k")" ] || bad "$k is empty"
 done
 
+# --- No quoted values: kubectl --from-env-file keeps quotes literally ---
+# check-env strips quotes for its own validation, but the cluster secret is
+# created by `kubectl create secret --from-env-file`, which does NOT — a
+# quoted value would reach postgres as ""huk"" (seen in the kind drill).
+# The env file must use bare KEY=value lines.
+if LC_ALL=C grep -q -E "^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*[\"']" "$ENV_FILE"; then
+  bad "quoted values are refused: kubectl --from-env-file keeps the quotes literally — write bare KEY=value lines (see k8s/.env.production.example)"
+fi
+
 # --- Secret strength and dev-default refusals ---
 v=$(get AUTH_SECRET)
 [ ${#v} -ge 32 ] || bad "AUTH_SECRET must be at least 32 chars (openssl rand -base64 32)"

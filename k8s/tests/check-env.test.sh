@@ -7,7 +7,8 @@
 # Domain amendment (EMAIL_FROM @example.com, dev mailpit sink, localhost
 # host, dev Postgres password, public-segment cache dir, placeholder tunnel
 # token) and the Kubernetes additions (DATABASE_URL scheme and in-cluster
-# host). Runs on POSIX sh, no dependencies.
+# host, and the bare KEY=value rule — kubectl --from-env-file keeps quotes
+# literally). Runs on POSIX sh, no dependencies.
 # Wired into the `invariants` CI job (task 7 of H-504).
 set -eu
 
@@ -19,20 +20,20 @@ trap 'rm -rf "$TMP"' EXIT
 
 GOOD="$TMP/good.env"
 cat > "$GOOD" <<'EOF'
-POSTGRES_USER="huk"
-POSTGRES_PASSWORD="drill-password-not-used-anywhere-42"
-POSTGRES_DB="huk"
-DATABASE_URL="postgresql://huk:drill-password-not-used-anywhere-42@huk-postgres:5432/huk"
-AUTH_SECRET="drill-auth-secret-not-used-anywhere-000000000042"
-NEXTAUTH_URL="https://hukradio.com"
-IP_HASH_SALT="drill-ip-hash-salt-not-used-anywhere-42"
-CLIENT_IP_HEADER="cf-connecting-ip"
-EMAIL_SERVER="smtp://drill:drill@smtp.drill.invalid:587"
-EMAIL_FROM="HUK <no-reply@hukradio.com>"
-SEED_AUDIO_BASE_URL="https://hukradio.com/seed"
-AUDIO_CACHE_DIR="/var/lib/huk/audio-cache"
-CLOUDFLARE_TUNNEL_TOKEN="drill-tunnel-token-not-used-anywhere-42"
-HUK_WEB_PORT="3100"
+POSTGRES_USER=huk
+POSTGRES_PASSWORD=drill-password-not-used-anywhere-42
+POSTGRES_DB=huk
+DATABASE_URL=postgresql://huk:drill-password-not-used-anywhere-42@huk-postgres:5432/huk
+AUTH_SECRET=drill-auth-secret-not-used-anywhere-000000000042
+NEXTAUTH_URL=https://hukradio.com
+IP_HASH_SALT=drill-ip-hash-salt-not-used-anywhere-42
+CLIENT_IP_HEADER=cf-connecting-ip
+EMAIL_SERVER=smtp://drill:drill@smtp.drill.invalid:587
+EMAIL_FROM=HUK <no-reply@hukradio.com>
+SEED_AUDIO_BASE_URL=https://hukradio.com/seed
+AUDIO_CACHE_DIR=/var/lib/huk/audio-cache
+CLOUDFLARE_TUNNEL_TOKEN=drill-tunnel-token-not-used-anywhere-42
+HUK_WEB_PORT=3100
 EOF
 
 pass=0
@@ -56,10 +57,11 @@ expect_fail() {
   fi
 }
 
-# Mutate one value in the good file into $TMP/variant.env.
+# Mutate one value in the good file into $TMP/variant.env (bare values —
+# quoting is refused by design, see the quoted-value test below).
 variant() {
   awk -v k="$1" -v nv="$2" -F= '
-    $1 == k { print k "=\"" nv "\""; next }
+    $1 == k { print k "=" nv; next }
     { print }
   ' "$GOOD" > "$TMP/variant.env"
 }
