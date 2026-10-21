@@ -66,8 +66,11 @@ spec:
             - name: seed-audio
               mountPath: /var/www/seed
               readOnly: true
+            # Full main config (not conf.d: files there are included inside
+            # the stock http{} block, where events/http are illegal).
             - name: nginx-conf
-              mountPath: /etc/nginx/conf.d
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
               readOnly: true
       volumes:
         - name: seed-audio
@@ -76,3 +79,6 @@ spec:
         - name: nginx-conf
           configMap:
             name: huk-seed-nginx
+            items:
+              - key: seed-nginx.conf
+                path: nginx.conf

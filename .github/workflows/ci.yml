@@ -353,7 +353,12 @@ jobs:
           {
             kubectl -n huk get pods -o wide
             kubectl -n huk get events --sort-by=.lastTimestamp
-            kubectl -n huk logs --all-containers --tail=200 deploy/huk-web deploy/huk-worker statefulset/huk-postgres deploy/huk-seed-audio
+            kubectl -n huk describe pods -l app.kubernetes.io/part-of=huk
+            # kubectl logs takes exactly ONE resource — loop over them.
+            for w in deployment/huk-web deployment/huk-worker deployment/huk-seed-audio statefulset/huk-postgres; do
+              echo "===== logs of $w ====="
+              kubectl -n huk logs "$w" --all-containers --tail=200 || true
+            done
           } > k8s-drill-logs.txt || true
       - name: Upload drill logs on failure
         if: failure()
