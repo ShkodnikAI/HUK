@@ -1,4 +1,7 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
+# A kustomize COMPONENT (not a Kustomization): overlays reference it under
+# `components:`, and kustomize requires kind: Component here — a plain
+# Kustomization under `components:` fails the render.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
 resources:
   - cloudflared-deployment.yaml
