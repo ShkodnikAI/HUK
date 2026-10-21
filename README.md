@@ -30,12 +30,14 @@ themselves — with AI-assisted moderation and transparent, deterministic charts
 | [`docs/LEGAL.md`](docs/LEGAL.md) | Legal assumptions and questions for counsel |
 | [`docs/adr/`](docs/adr/) | Architecture decision records |
 | [`policy/moderation-policy.md`](policy/moderation-policy.md) | What is and is not allowed |
-| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Production deployment on the Owner's host: preflight, Cloudflare Tunnel, Docker Hub, SMTP, backups, kill switch |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Production deployment on the Owner's Kubernetes (Rancher) host: preflight, Cloudflare Tunnel, Docker Hub, SMTP, backups, kill switch |
 
 ## Stack
 Next.js 16 (App Router) · TypeScript (strict) · Tailwind 4 + shadcn/ui tokens · zod-validated env ·
 PostgreSQL 16 + Prisma 6 (migrations only, no `db push`) · Vitest · ESLint · bun · a single worker
-process (src/worker) · Docker Compose (`web`, `worker`, `postgres:16`) on one VPS behind Cloudflare.
+process (src/worker) · Docker images (`web`, `worker`) · Docker Compose for local development,
+Kubernetes (kustomize manifests in `k8s/`) for production on the Owner's Rancher host behind
+Cloudflare.
 The `web` and `worker` containers run as the non-root user `bun` (uid 1000, H-108).
 `next-intl` and Auth.js arrive with H-105/H-102 respectively.
 
@@ -82,11 +84,11 @@ environment — the dev defaults must never reach production (S8 fails loud at b
 otherwise). CI proves the stack on every PR and on `main` with the `docker-smoke` job
 (images build, both containers run as non-root, `/api/health` and `/api/radio/now`
 answer 200, the worker stops cleanly on SIGTERM). Production deployments must
-not use the dev stack at all: they run the standalone
-`deploy/docker-compose.prod.yml` (project `huk`, loopback-only port, Cloudflare
-Tunnel sidecar, ops scripts with automatic rollback) — the full procedure is
-[`docs/RUNBOOK.md`](docs/RUNBOOK.md), and CI replays the production drill
-(`deploy-smoke`) on every PR.
+not use the dev stack at all: they run the Kubernetes stack in `k8s/`
+(kustomize overlays, namespace `huk`, ClusterIP-only services, cloudflared
+tunnel sidecar, nightly backup CronJob) — the full procedure is
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md), and CI replays the production drill on
+a kind cluster (`deploy-smoke`) on every PR.
 
 ## Contributing
 Work happens through naryads: open an issue from the *Naryad* template that references a card in

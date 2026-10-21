@@ -1,12 +1,14 @@
 #!/bin/sh
-# deploy/check-env.sh (H-504) — pre-flight gate for the production stack.
+# k8s/check-env.sh (H-504, Kubernetes edition) — pre-flight gate for the
+# production env file.
 #
-# Parses the env file WITHOUT executing it and refuses to start (exit 1) when
-# a secret is empty, still equals a dev default, or a URL is not a real
-# https origin (S8 fail loud, S9 fail closed). deploy/up.sh and update.sh run
-# this before touching Docker.
+# Parses the env file WITHOUT executing it and refuses the secret creation
+# (exit 1) when a secret is empty, still equals a dev default, or a URL is
+# not a real https origin (S8 fail loud, S9 fail closed). Run it BEFORE
+# `kubectl create secret generic huk-env --from-env-file=...` (RUNBOOK §3):
+# a bad value must not reach the cluster.
 #
-# Usage: deploy/check-env.sh [path-to-env-file]   (default: deploy/.env)
+# Usage: k8s/check-env.sh [path-to-env-file]   (default: k8s/.env)
 set -eu
 
 SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -14,7 +16,7 @@ ENV_FILE=${1:-"$SELF_DIR/.env"}
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "FAIL: env file not found: $ENV_FILE" >&2
-  echo "      copy deploy/.env.production.example to deploy/.env and fill it first" >&2
+  echo "      copy k8s/.env.production.example to k8s/.env and fill it first" >&2
   exit 1
 fi
 
@@ -54,11 +56,20 @@ bad() {
 }
 
 # --- Required non-empty ---
-for k in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB AUTH_SECRET NEXTAUTH_URL \
-         IP_HASH_SALT CLIENT_IP_HEADER EMAIL_SERVER EMAIL_FROM \
-         SEED_AUDIO_BASE_URL CLOUDFLARE_TUNNEL_TOKEN HUK_BACKUP_DIR; do
+for k in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB DATABASE_URL AUTH_SECRET \
+         NEXTAUTH_URL IP_HASH_SALT CLIENT_IP_HEADER EMAIL_SERVER EMAIL_FROM \
+         SEED_AUDIO_BASE_URL CLOUDFLARE_TUNNEL_TOKEN; do
   [ -n "$(get "$k")" ] || bad "$k is empty"
 done
+
+# --- No quoted values: kubectl --from-env-file keeps quotes literally ---
+# check-env strips quotes for its own validation, but the cluster secret is
+# created by `kubectl create secret --from-env-file`, which does NOT — a
+# quoted value would reach postgres as ""huk"" (seen in the kind drill).
+# The env file must use bare KEY=value lines.
+if LC_ALL=C grep -q -E "^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*[\"']" "$ENV_FILE"; then
+  bad "quoted values are refused: kubectl --from-env-file keeps the quotes literally — write bare KEY=value lines (see k8s/.env.production.example)"
+fi
 
 # --- Secret strength and dev-default refusals ---
 v=$(get AUTH_SECRET)
@@ -67,11 +78,26 @@ v=$(get AUTH_SECRET)
 v=$(get POSTGRES_PASSWORD)
 [ "$v" != "huk" ] || bad "POSTGRES_PASSWORD is the dev default 'huk'"
 [ ${#v} -ge 16 ] || bad "POSTGRES_PASSWORD must be at least 16 chars (openssl rand -hex 16)"
-# The compose file interpolates this password into DATABASE_URL — a character
-# outside the URL-unreserved set (base64 `/`, `+`, `=`, or any `@:?#%`) breaks
-# the URL at boot (prisma P1013, seen in CI). Refuse it here, loudly.
+# The operator embeds this password into DATABASE_URL (the full URL is an
+# explicit key of the env file) — a character outside the URL-unreserved set
+# (base64 `/`, `+`, `=`, or any `@:?#%`) breaks the URL at boot (prisma
+# P1013, seen in CI). Refuse it here, loudly.
 case "$v" in
   *[!A-Za-z0-9._~-]*) bad "POSTGRES_PASSWORD must be URL-safe ([A-Za-z0-9._~-]) — it is embedded into DATABASE_URL (generate: openssl rand -hex 16)" ;;
+esac
+
+# --- DATABASE_URL: the in-cluster address, built from the dedicated credentials ---
+# Kubernetes does not interpolate DATABASE_URL from POSTGRES_* the way the
+# compose file did: the full URL is an explicit key. It must point at the
+# in-cluster postgres Service, never at localhost or a host address.
+v=$(get DATABASE_URL)
+case "$v" in
+  postgresql://*) ;;
+  *) bad "DATABASE_URL must start with postgresql:// (got: $v)" ;;
+esac
+case "$v" in
+  *@huk-postgres[:/]*) ;;
+  *) bad "DATABASE_URL host must be the in-cluster Service huk-postgres (got: $v)" ;;
 esac
 
 v=$(get IP_HASH_SALT)
@@ -143,12 +169,6 @@ if [ -n "$v" ]; then
       ;;
   esac
 fi
-v=$(get HUK_BACKUP_DIR)
-case "$v" in
-  /*) ;;
-  *) bad "HUK_BACKUP_DIR must be an absolute host path (got: $v)" ;;
-esac
-
 if [ "$problems" -gt 0 ]; then
   echo "$ENV_FILE: $problems problem(s) — refusing to start (S8/S9)" >&2
   exit 1

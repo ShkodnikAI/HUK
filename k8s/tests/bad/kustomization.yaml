@@ -1,0 +1,8 @@
+# Deliberately broken overlay — the CI checker (scripts/ci/check-k8s-manifests.mjs)
+# MUST reject it. If the checker accepts this overlay, the checker is broken,
+# not this fixture ("a checker that cannot fail is not a check").
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: huk
+resources:
+  - bad-manifests.yaml

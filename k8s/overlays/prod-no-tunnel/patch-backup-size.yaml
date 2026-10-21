@@ -1,0 +1,10 @@
+# Production backup retention: 7 daily + 4 weekly custom-format dumps of a
+# small database fit comfortably; 20 Gi leaves room for growth.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-data
+spec:
+  resources:
+    requests:
+      storage: 20Gi

@@ -1,11 +1,14 @@
 #!/bin/sh
-# deploy/tests/check-env.test.sh (H-504) — tests for deploy/check-env.sh.
+# k8s/tests/check-env.test.sh (H-504, Kubernetes edition) — tests for
+# k8s/check-env.sh.
 #
 # Covers the four cases the naryad requires (empty secret, dev default,
 # http URL, good file) plus the refusal rules added by the Auditor's
 # Domain amendment (EMAIL_FROM @example.com, dev mailpit sink, localhost
-# host, dev Postgres password, relative backup dir, public-segment cache
-# dir, placeholder tunnel token). Runs on POSIX sh, no dependencies.
+# host, dev Postgres password, public-segment cache dir, placeholder tunnel
+# token) and the Kubernetes additions (DATABASE_URL scheme and in-cluster
+# host, and the bare KEY=value rule — kubectl --from-env-file keeps quotes
+# literally). Runs on POSIX sh, no dependencies.
 # Wired into the `invariants` CI job (task 7 of H-504).
 set -eu
 
@@ -17,20 +20,20 @@ trap 'rm -rf "$TMP"' EXIT
 
 GOOD="$TMP/good.env"
 cat > "$GOOD" <<'EOF'
-POSTGRES_USER="huk"
-POSTGRES_PASSWORD="drill-password-not-used-anywhere-42"
-POSTGRES_DB="huk"
-AUTH_SECRET="drill-auth-secret-not-used-anywhere-000000000042"
-NEXTAUTH_URL="https://hukradio.com"
-IP_HASH_SALT="drill-ip-hash-salt-not-used-anywhere-42"
-CLIENT_IP_HEADER="cf-connecting-ip"
-EMAIL_SERVER="smtp://drill:drill@smtp.drill.invalid:587"
-EMAIL_FROM="HUK <no-reply@hukradio.com>"
-SEED_AUDIO_BASE_URL="https://hukradio.com/seed"
-AUDIO_CACHE_DIR="/var/lib/huk/audio-cache"
-CLOUDFLARE_TUNNEL_TOKEN="drill-tunnel-token-not-used-anywhere-42"
-HUK_WEB_PORT="3100"
-HUK_BACKUP_DIR="/srv/huk-backups"
+POSTGRES_USER=huk
+POSTGRES_PASSWORD=drill-password-not-used-anywhere-42
+POSTGRES_DB=huk
+DATABASE_URL=postgresql://huk:drill-password-not-used-anywhere-42@huk-postgres:5432/huk
+AUTH_SECRET=drill-auth-secret-not-used-anywhere-000000000042
+NEXTAUTH_URL=https://hukradio.com
+IP_HASH_SALT=drill-ip-hash-salt-not-used-anywhere-42
+CLIENT_IP_HEADER=cf-connecting-ip
+EMAIL_SERVER=smtp://drill:drill@smtp.drill.invalid:587
+EMAIL_FROM=HUK <no-reply@hukradio.com>
+SEED_AUDIO_BASE_URL=https://hukradio.com/seed
+AUDIO_CACHE_DIR=/var/lib/huk/audio-cache
+CLOUDFLARE_TUNNEL_TOKEN=drill-tunnel-token-not-used-anywhere-42
+HUK_WEB_PORT=3100
 EOF
 
 pass=0
@@ -54,16 +57,22 @@ expect_fail() {
   fi
 }
 
-# Mutate one value in the good file into $TMP/variant.env.
+# Mutate one value in the good file into $TMP/variant.env (bare values —
+# quoting is refused by design, see the quoted-value test below).
 variant() {
   awk -v k="$1" -v nv="$2" -F= '
-    $1 == k { print k "=\"" nv "\""; next }
+    $1 == k { print k "=" nv; next }
     { print }
   ' "$GOOD" > "$TMP/variant.env"
 }
 
 # 1. good file -> pass
 expect_ok "$GOOD" "a complete, non-default file passes"
+
+# 1a. quoted values are refused: kubectl --from-env-file keeps quotes
+#     literally (the kind drill saw ALTER USER ""huk"")
+sed 's/^POSTGRES_USER=huk$/POSTGRES_USER="huk"/' "$GOOD" > "$TMP/quoted.env"
+expect_fail "$TMP/quoted.env" "quoted values are refused"
 
 # 2. empty secret (AUTH_SECRET)
 variant AUTH_SECRET ""
@@ -73,10 +82,18 @@ expect_fail "$TMP/variant.env" "empty AUTH_SECRET is refused"
 variant IP_HASH_SALT "huk-dev-ip-hash-salt-do-not-use-in-prod"
 expect_fail "$TMP/variant.env" "dev IP_HASH_SALT is refused"
 
-# 3a. POSTGRES_PASSWORD not URL-safe: a base64 `/` breaks the DATABASE_URL the
-#     compose file interpolates (prisma P1013, caught by the deploy drill).
+# 3a. POSTGRES_PASSWORD not URL-safe: a base64 `/` breaks the DATABASE_URL
+#     it is embedded into (prisma P1013, caught by the deploy drill).
 variant POSTGRES_PASSWORD "base64/with/slashes-42"
 expect_fail "$TMP/variant.env" "non-URL-safe POSTGRES_PASSWORD is refused"
+
+# 3c. DATABASE_URL must point at the in-cluster Service, never localhost
+variant DATABASE_URL "postgresql://huk:drill-password-not-used-anywhere-42@localhost:5432/huk"
+expect_fail "$TMP/variant.env" "localhost DATABASE_URL host is refused"
+
+# 3d. DATABASE_URL must be a postgresql:// URL
+variant DATABASE_URL "mysql://huk:drill-password-not-used-anywhere-42@huk-postgres:5432/huk"
+expect_fail "$TMP/variant.env" "non-postgresql DATABASE_URL is refused"
 
 # 3b. a URL-safe hex password passes the same gate
 variant POSTGRES_PASSWORD "4f1c9b2e7a5d3f806c2e1b9a7d5f3c48"
@@ -104,9 +121,6 @@ expect_fail "$TMP/variant.env" "empty tunnel token is refused"
 
 variant AUDIO_CACHE_DIR "/srv/public/cache"
 expect_fail "$TMP/variant.env" "AUDIO_CACHE_DIR inside a public segment is refused"
-
-variant HUK_BACKUP_DIR "backups"
-expect_fail "$TMP/variant.env" "relative HUK_BACKUP_DIR is refused"
 
 # missing env file
 expect_fail "$TMP/does-not-exist.env" "missing env file is refused"

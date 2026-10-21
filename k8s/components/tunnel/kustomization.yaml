@@ -1,0 +1,11 @@
+# A kustomize COMPONENT (not a Kustomization): overlays reference it under
+# `components:`, and kustomize requires kind: Component here — a plain
+# Kustomization under `components:` fails the render.
+# The namespace is set HERE: components do not inherit the referencing
+# overlay's `namespace:` transformer (caught by the CI checker on a real
+# render — the deployment rendered with no namespace at all).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+namespace: huk
+resources:
+  - cloudflared-deployment.yaml

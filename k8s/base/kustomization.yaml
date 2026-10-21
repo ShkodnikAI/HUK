@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - postgres-service.yaml
+  - postgres-statefulset.yaml
+  - web-service.yaml
+  - web-deployment.yaml
+  - worker-deployment.yaml
+  - seed-audio-service.yaml
+  - seed-audio-deployment.yaml
+  - seed-audio-pvc.yaml
+  - audio-cache-pvc.yaml
+  - backup-data-pvc.yaml
+  - backup-cronjob.yaml
+configMapGenerator:
+  - name: huk-seed-nginx
+    files:
+      - scripts/seed-nginx.conf
+  - name: huk-backup-script
+    files:
+      - scripts/backup.sh

@@ -1,0 +1,21 @@
+# The full production stack WITHOUT the tunnel sidecar. Two uses:
+#   1. the first start before the Cloudflare hostname rules exist (RUNBOOK §4),
+#   2. the base that overlays/prod adds the tunnel component to — release tags
+#      are bumped HERE, once, and both overlays inherit them.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: huk
+resources:
+  - ../../base
+patches:
+  - path: patch-pgdata-size.yaml
+  - path: patch-backup-size.yaml
+images:
+  # RUNBOOK §6: after building and importing a release, replace both tags
+  # (they must match the images imported into the cluster). "latest" is
+  # forbidden on purpose: with imagePullPolicy IfNotPresent an unpinned tag
+  # silently keeps running the old image after an import.
+  - name: huk/huk-web
+    newTag: v0-bootstrap
+  - name: huk/huk-worker
+    newTag: v0-bootstrap

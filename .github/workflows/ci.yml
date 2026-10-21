@@ -32,22 +32,33 @@ jobs:
         run: |
           node scripts/ci/audio-store.mjs
           node scripts/ci/audio-store.mjs --selftest
-      - name: Prod compose renders and passes the invariant checker (H-504 task 7)
+      - name: Kustomize renders and passes the invariant checker (H-504, K8s)
         run: |
-          docker compose -f deploy/docker-compose.prod.yml --env-file deploy/tests/fake-prod.env config --format json > /tmp/prod-rendered.json
-          node scripts/ci/check-prod-compose.mjs /tmp/prod-rendered.json
-      - name: The same checker must reject a deliberately broken stack (H-504 task 7)
+          # kubectl kustomize -o json does NOT print to stdout (the flag is a
+          # filename for kustomize) — render YAML and convert explicitly.
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          render() {
+            kubectl kustomize "$1" > /tmp/k8s-render.yaml || exit 1
+            python3 -c 'import json,sys,yaml as y; json.dump([d for d in y.safe_load_all(open(sys.argv[1])) if d], open(sys.argv[2], "w"))' /tmp/k8s-render.yaml "$2" || exit 1
+          }
+          render k8s/overlays/prod /tmp/k8s-prod.json
+          node scripts/ci/check-k8s-manifests.mjs /tmp/k8s-prod.json
+          render k8s/overlays/prod-no-tunnel /tmp/k8s-notunnel.json
+          node scripts/ci/check-k8s-manifests.mjs /tmp/k8s-notunnel.json
+      - name: The same checker must reject a deliberately broken stack (H-504, K8s)
         run: |
-          docker compose -f deploy/tests/bad-compose.fixture.yml config --format json > /tmp/bad-rendered.json
-          if node scripts/ci/check-prod-compose.mjs /tmp/bad-rendered.json; then
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          kubectl kustomize k8s/tests/bad > /tmp/k8s-bad.yaml || exit 1
+          python3 -c 'import json,sys,yaml as y; json.dump([d for d in y.safe_load_all(open(sys.argv[1])) if d], open(sys.argv[2], "w"))' /tmp/k8s-bad.yaml /tmp/k8s-bad.json || exit 1
+          if node scripts/ci/check-k8s-manifests.mjs /tmp/k8s-bad.json; then
             echo "FAIL: the checker accepted a deliberately broken stack"
             exit 1
           fi
-          echo "checker rejected the broken fixture as required"
-      - name: shellcheck on the deploy scripts (H-504 task 3)
-        run: shellcheck deploy/*.sh deploy/tests/*.sh
+          echo "checker rejected the broken overlay as required"
+      - name: shellcheck on the k8s scripts (H-504 task 3)
+        run: shellcheck k8s/check-env.sh k8s/base/scripts/*.sh k8s/tests/*.sh
       - name: check-env.sh test suite (H-504 task 2)
-        run: sh deploy/tests/check-env.test.sh
+        run: sh k8s/tests/check-env.test.sh
 
   secrets:
     name: gitleaks (blocking)
@@ -182,131 +193,180 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # H-504: full drill of the PRODUCTION stack (deploy/docker-compose.prod.yml)
-  # with throw-away secrets and no tunnel (--no-tunnel). Proves the done
-  # criteria on every PR: the stack boots from the prod file, a migration ran,
-  # /api/health answers on the loopback port, only web publishes a port,
-  # update.sh rolls a broken image back automatically, the backup -> restore
-  # round trip lands the data in a scratch database, and the kill switch takes
-  # the site offline and back. NOT a required check — the Owner decides on
-  # ruleset inclusion.
+  # H-504 (Kubernetes edition): full drill of the production stack on a kind
+  # cluster, with throw-away secrets and no tunnel. Proves the same done
+  # criteria the compose drill proved: the stack boots from the k8s/ overlays,
+  # a migration ran, /api/health answers, only ClusterIP services exist (the
+  # cluster publishes nothing), update/rollback mechanics work, the backup ->
+  # restore round trip lands the data in a scratch database, and the kill
+  # switch takes the site offline and back. NOT a required check — the Owner
+  # decides on ruleset inclusion.
   deploy-smoke:
-    name: deploy-smoke (prod stack drill)
+    name: deploy-smoke (k8s stack drill)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
-      - name: Write a throw-away deploy/.env (never committed)
+      - name: Install kind (pinned)
         run: |
-          cd deploy
-          cat > .env <<EOF
-          POSTGRES_USER="huk"
-          # hex, not base64: the password is interpolated into DATABASE_URL by
-          # the compose file — a base64 `/` or `@` breaks the URL (P1013).
-          POSTGRES_PASSWORD="$(openssl rand -hex 16)"
-          POSTGRES_DB="huk"
-          AUTH_SECRET="$(openssl rand -base64 32)"
-          NEXTAUTH_URL="https://hukradio.com"
-          IP_HASH_SALT="$(openssl rand -base64 24)"
-          CLIENT_IP_HEADER="cf-connecting-ip"
-          EMAIL_SERVER="smtp://ci-smoke:ci-smoke@smtp.ci-smoke.invalid:587"
-          EMAIL_FROM="HUK <no-reply@hukradio.com>"
-          SEED_AUDIO_BASE_URL="https://hukradio.com/seed"
-          AUDIO_CACHE_DIR="/var/lib/huk/audio-cache"
-          CLOUDFLARE_TUNNEL_TOKEN="ci-smoke-fake-tunnel-token-not-a-secret"
-          HUK_WEB_PORT="3100"
-          HUK_BACKUP_DIR="/tmp/huk-ci-backups"
+          curl -sSL -o kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          kind version
+      - name: Create the drill cluster
+        run: kind create cluster --name huk-drill --wait 180s
+      - name: Build the release images (same Dockerfile, both targets)
+        run: |
+          docker build --target web -t huk/huk-web:ci .
+          docker build --target worker -t huk/huk-worker:ci .
+      - name: Load the images into the cluster (the host-import equivalent)
+        run: kind load docker-image huk/huk-web:ci huk/huk-worker:ci --name huk-drill
+      - name: Write a throw-away env file, gate it, create the secret (never committed)
+        run: |
+          PW="$(openssl rand -hex 16)"
+          mkdir -p k8s
+          cat > k8s/.env <<EOF
+          # bare KEY=value — kubectl --from-env-file keeps quotes literally
+          POSTGRES_USER=huk
+          POSTGRES_PASSWORD=$PW
+          POSTGRES_DB=huk
+          DATABASE_URL=postgresql://huk:$PW@huk-postgres:5432/huk
+          AUTH_SECRET=$(openssl rand -base64 32)
+          NEXTAUTH_URL=https://hukradio.com
+          IP_HASH_SALT=$(openssl rand -base64 24)
+          CLIENT_IP_HEADER=cf-connecting-ip
+          EMAIL_SERVER=smtp://ci-smoke:ci-smoke@smtp.ci-smoke.invalid:587
+          EMAIL_FROM=HUK <no-reply@hukradio.com>
+          SEED_AUDIO_BASE_URL=https://hukradio.com/seed
+          AUDIO_CACHE_DIR=/var/lib/huk/audio-cache
+          AUDIO_CACHE_MAX_BYTES=419430400
+          CLOUDFLARE_TUNNEL_TOKEN=ci-smoke-fake-tunnel-token-not-a-secret
+          HUK_WEB_PORT=3100
           EOF
-          chmod 600 .env
-      - name: First start without the tunnel (deploy/up.sh --no-tunnel)
-        run: sh deploy/up.sh --no-tunnel
+          chmod 600 k8s/.env
+          sh k8s/check-env.sh k8s/.env
+          kubectl apply -f k8s/base/namespace.yaml
+          kubectl -n huk create secret generic huk-env --from-env-file=k8s/.env
+      - name: Apply the CI overlay (no tunnel — the --no-tunnel equivalent)
+        run: kubectl apply -k k8s/overlays/ci
+      - name: Wait for every workload to become available
+        run: |
+          kubectl -n huk rollout status --timeout=600s statefulset/huk-postgres
+          kubectl -n huk rollout status --timeout=600s deployment/huk-web
+          kubectl -n huk rollout status --timeout=600s deployment/huk-worker
+          kubectl -n huk rollout status --timeout=600s deployment/huk-seed-audio
       - name: Migration ran (web applies prisma migrations before start)
         run: |
-          n="$(docker compose -p huk -f deploy/docker-compose.prod.yml --env-file deploy/.env exec -T postgres psql -U huk -d huk -At -c 'SELECT count(*) FROM _prisma_migrations')"
+          n="$(kubectl -n huk exec statefulset/huk-postgres -- psql -U huk -d huk -At -c 'SELECT count(*) FROM _prisma_migrations')"
           echo "migrations applied: $n"
           [ "$n" -ge 1 ]
-      - name: Only web publishes a port, loopback-only (live check)
+      - name: Only ClusterIP services exist — the cluster publishes nothing (live check)
         run: |
-          echo "web published: $(docker port huk-web-1)"
-          docker port huk-web-1 | grep -q '3000/tcp -> 127\.0\.0\.1:3100'
-          # docker port prints nothing (exit 0) when a container publishes
-          # nothing — so an empty output is the assertion, not the exit code.
-          for s in postgres worker seed-audio; do
-            m="$(docker port "huk-$s-1" || true)"
-            [ -z "$m" ] || { echo "FAIL: $s publishes: $m"; exit 1; }
-          done
-          echo "only web publishes, on 127.0.0.1:3100; nothing else is published"
-      - name: Every service reports healthy
+          kubectl -n huk get svc
+          types="$(kubectl -n huk get svc -o jsonpath='{range .items[*]}{.spec.type}{"\n"}{end}')"
+          echo "$types"
+          noncluster="$(printf '%s\n' "$types" | grep -cv ClusterIP || true)"
+          [ "$noncluster" = "0" ] || { echo "FAIL: non-ClusterIP service found"; exit 1; }
+      - name: GET /api/health answers 200 through port-forward
         run: |
-          docker compose -p huk -f deploy/docker-compose.prod.yml --env-file deploy/.env ps
-          for s in postgres web worker seed-audio; do
-            st="$(docker inspect --format '{{.State.Health.Status}}' "huk-$s-1")"
-            echo "$s health: $st"
-            [ "$st" = "healthy" ] || { echo "FAIL: $s is $st"; exit 1; }
+          kubectl -n huk port-forward svc/huk-web 3100:3000 > /tmp/pf.log 2>&1 &
+          PF=$!
+          code=000
+          for i in $(seq 1 45); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/api/health || true)"
+            [ "$code" = "200" ] && break
+            sleep 2
           done
-      - name: update.sh rolls a broken image back automatically (task 3)
+          kill $PF 2>/dev/null || true
+          echo "health: $code"
+          [ "$code" = "200" ]
+      - name: backup -> restore round trip into a scratch database (done criteria)
+        run: |
+          kubectl -n huk exec statefulset/huk-postgres -- psql -U huk -d huk -c "CREATE TABLE drill_marker (id int PRIMARY KEY, note text)"
+          kubectl -n huk exec statefulset/huk-postgres -- psql -U huk -d huk -c "INSERT INTO drill_marker VALUES (42, 'k8s-drill-marker')"
+          kubectl -n huk create job --from=cronjob/huk-backup drill-backup
+          kubectl -n huk wait --for=condition=complete job/drill-backup --timeout=300s
+          kubectl -n huk logs job/drill-backup
+          kubectl -n huk delete job huk-restore-drill --ignore-not-found
+          kubectl apply -f k8s/jobs/restore-drill.yaml
+          kubectl -n huk wait --for=condition=complete job/huk-restore-drill --timeout=600s
+          kubectl -n huk logs job/huk-restore-drill | tee /tmp/restore.log
+          grep -q "drill_marker verified: k8s-drill-marker" /tmp/restore.log
+          kubectl -n huk delete job huk-restore-drill drill-backup
+      - name: Kill switch — scale to zero takes the site offline, start brings it back
+        run: |
+          kubectl -n huk scale deployment/huk-web --replicas=0
+          kubectl -n huk wait --for=delete pod -l app.kubernetes.io/component=web --timeout=120s
+          kubectl -n huk port-forward svc/huk-web 3101:3000 > /tmp/pf2.log 2>&1 &
+          PF=$!
+          sleep 2
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3101/api/health || true)"
+          kill $PF 2>/dev/null || true
+          [ "$code" != "200" ] || { echo "FAIL: site still answers after the kill switch"; exit 1; }
+          echo "site offline (health code: $code)"
+          kubectl -n huk scale deployment/huk-web --replicas=1
+          kubectl -n huk rollout status --timeout=600s deployment/huk-web
+          kubectl -n huk port-forward svc/huk-web 3102:3000 > /tmp/pf3.log 2>&1 &
+          PF=$!
+          code=000
+          for i in $(seq 1 45); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3102/api/health || true)"
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          kill $PF 2>/dev/null || true
+          echo "site back online (health code: $code)"
+          [ "$code" = "200" ]
+      - name: A broken image fails its rollout; retagging back restores it (release mechanics)
         run: |
           docker build -t huk/huk-web:broken -t huk/huk-worker:broken -f- . <<'DOCKERFILE'
           FROM busybox:1.36
           CMD ["false"]
           DOCKERFILE
-          if sh deploy/update.sh broken --no-tunnel; then
-            echo "FAIL: update.sh accepted a broken image"
+          kind load docker-image huk/huk-web:broken huk/huk-worker:broken --name huk-drill
+          sed -i 's/newTag: ci/newTag: broken/' k8s/overlays/ci/kustomization.yaml
+          kubectl apply -k k8s/overlays/ci
+          if kubectl -n huk rollout status --timeout=120s deployment/huk-web; then
+            echo "FAIL: the broken image rolled out"
             exit 1
           fi
-          echo "update.sh failed as expected and rolled back to the previous tag"
-      - name: Stack healthy again on the previous tag
+          echo "broken rollout failed as expected"
+          sed -i 's/newTag: broken/newTag: ci/' k8s/overlays/ci/kustomization.yaml
+          kubectl apply -k k8s/overlays/ci
+          kubectl -n huk rollout status --timeout=600s deployment/huk-web
+          kubectl -n huk rollout status --timeout=600s deployment/huk-worker
+      - name: Stack healthy again on the release tag
         run: |
+          kubectl -n huk port-forward svc/huk-web 3103:3000 > /tmp/pf4.log 2>&1 &
+          PF=$!
           code=000
           for i in $(seq 1 45); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/api/health || true)"
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3103/api/health || true)"
             [ "$code" = "200" ] && break
             sleep 2
           done
+          kill $PF 2>/dev/null || true
           echo "health after rollback: $code"
           [ "$code" = "200" ]
-      - name: backup -> restore round trip into a scratch DB (done criteria)
-        run: |
-          c() { docker compose -p huk -f deploy/docker-compose.prod.yml --env-file deploy/.env "$@"; }
-          c exec -T postgres psql -U huk -d huk -c "CREATE TABLE drill_marker (id int PRIMARY KEY, note text)"
-          c exec -T postgres psql -U huk -d huk -c "INSERT INTO drill_marker VALUES (42, 'h-504-ci-drill')"
-          out="$(sh deploy/backup.sh deploy/.env)"
-          echo "$out"
-          dump="$(printf '%s\n' "$out" | sed -n 's/^backup OK: \(.*\) (.*/\1/p')"
-          [ -f "$dump" ] || { echo "FAIL: dump not found: $dump"; exit 1; }
-          live="$(c exec -T postgres psql -U huk -d huk -At -c 'SELECT count(*) FROM "Track"')"
-          scratch="$(sh deploy/restore.sh "$dump" deploy/.env | sed -n 's/^restored into database \(.*\) (scratch.*/\1/p')"
-          echo "scratch database: $scratch"
-          marker="$(c exec -T postgres psql -U huk -d "$scratch" -At -c 'SELECT note FROM drill_marker WHERE id = 42')"
-          [ "$marker" = "h-504-ci-drill" ] || { echo "FAIL: drill_marker did not survive the round trip: '$marker'"; exit 1; }
-          restored="$(c exec -T postgres psql -U huk -d "$scratch" -At -c 'SELECT count(*) FROM "Track"')"
-          echo "Track rows: live=$live restored=$restored"
-          [ "$live" = "$restored" ]
-      - name: Kill switch — stop takes the site offline, start brings it back (task 5)
-        run: |
-          c() { docker compose -p huk -f deploy/docker-compose.prod.yml --env-file deploy/.env "$@"; }
-          c stop web seed-audio
-          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3100/api/health || true)"
-          [ "$code" != "200" ] || { echo "FAIL: site still answers after the kill switch"; exit 1; }
-          echo "site offline (health code: $code)"
-          c start web seed-audio
-          code=000
-          for i in $(seq 1 45); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/api/health || true)"
-            [ "$code" = "200" ] && break
-            sleep 2
-          done
-          echo "site back online (health code: $code)"
-          [ "$code" = "200" ]
-      - name: Dump deploy logs on failure
+      - name: Dump cluster state on failure
         if: failure()
         run: |
-          docker compose -p huk -f deploy/docker-compose.prod.yml --env-file deploy/.env logs --no-color > deploy-smoke-logs.txt || true
-      - name: Upload deploy logs on failure
+          {
+            kubectl -n huk get pods -o wide
+            kubectl -n huk get events --sort-by=.lastTimestamp
+            kubectl -n huk describe pods -l app.kubernetes.io/part-of=huk
+            # kubectl logs takes exactly ONE resource — loop over them.
+            for w in deployment/huk-web deployment/huk-worker deployment/huk-seed-audio statefulset/huk-postgres; do
+              echo "===== logs of $w ====="
+              kubectl -n huk logs "$w" --all-containers --tail=200 || true
+            done
+          } > k8s-drill-logs.txt || true
+      - name: Upload drill logs on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: deploy-smoke-logs
-          path: deploy-smoke-logs.txt
-      - name: Tear down (volumes included)
+          name: k8s-drill-logs
+          path: k8s-drill-logs.txt
+      - name: Tear down the drill cluster
         if: always()
-        run: docker compose -p huk -f deploy/docker-compose.prod.yml --env-file deploy/.env down -v
+        run: kind delete cluster --name huk-drill

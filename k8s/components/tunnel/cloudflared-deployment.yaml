@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: huk-cloudflared
+  labels:
+    app.kubernetes.io/name: huk
+    app.kubernetes.io/component: cloudflared
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: huk
+      app.kubernetes.io/component: cloudflared
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: huk
+        app.kubernetes.io/component: cloudflared
+    spec:
+      # Outbound-only tunnel: no ingress object, no host ports, no published
+      # services — the pod dials out to Cloudflare's edge, so the host keeps
+      # zero inbound ports for HUK (Rancher coexistence, RUNBOOK §12). The
+      # compose stack ran this image with its default user; the manifest
+      # checker allowlists that here while still denying privilege escalation.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2025.9.1
+          imagePullPolicy: IfNotPresent
+          args: ["tunnel", "--no-autoupdate", "run"]
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: huk-env
+                  key: CLOUDFLARE_TUNNEL_TOKEN
+          # No probes: the compose healthcheck had none for the sidecar, and
+          # cloudflared reconnects to the edge on its own.
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 256Mi    # compose stack limit
+              cpu: 500m
+          securityContext:
+            allowPrivilegeEscalation: false

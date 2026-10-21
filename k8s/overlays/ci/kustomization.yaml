@@ -1,0 +1,13 @@
+# The CI drill overlay (kind cluster): the base stack with locally built
+# images tagged `ci` and NO tunnel sidecar — the Kubernetes equivalent of the
+# compose drill's --no-tunnel.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: huk
+resources:
+  - ../../base
+images:
+  - name: huk/huk-web
+    newTag: ci
+  - name: huk/huk-worker
+    newTag: ci

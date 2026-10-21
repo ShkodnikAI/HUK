@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: huk-backup
+  labels:
+    app.kubernetes.io/name: huk
+    app.kubernetes.io/component: backups
+spec:
+  # Same schedule as the compose RUNBOOK cron line: 04:10 UTC nightly.
+  schedule: "10 4 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: huk
+            app.kubernetes.io/component: backups
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: postgres:16
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: PGHOST
+                  value: huk-postgres
+              envFrom:
+                - secretRef:
+                    name: huk-env
+              command: ["sh", "/scripts/backup.sh"]
+              resources:
+                requests:
+                  memory: 64Mi
+                  cpu: 100m
+                limits:
+                  memory: 256Mi
+                  cpu: 500m
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: backup-data
+            - name: script
+              configMap:
+                name: huk-backup-script

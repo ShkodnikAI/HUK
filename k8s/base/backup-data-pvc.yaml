@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-data
+  labels:
+    app.kubernetes.io/name: huk
+    app.kubernetes.io/component: backups
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi            # patched to 20Gi in overlays/prod-no-tunnel

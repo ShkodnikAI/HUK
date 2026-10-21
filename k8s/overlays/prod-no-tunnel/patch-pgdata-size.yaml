@@ -1,0 +1,17 @@
+# Production data size: 10 Gi of Postgres storage (the base template's 5 Gi
+# is the CI/first-install default). Strategic-merge on volumeClaimTemplates
+# matches by metadata.name.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: huk-postgres
+spec:
+  volumeClaimTemplates:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: pgdata
+      spec:
+        resources:
+          requests:
+            storage: 10Gi

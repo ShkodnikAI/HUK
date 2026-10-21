@@ -1,0 +1,135 @@
+# Restore drill (H-504 done criteria, Kubernetes edition).
+#
+# Run explicitly — NOT part of any kustomization overlay:
+#   kubectl delete job huk-restore-drill -n huk --ignore-not-found
+#   kubectl apply -f k8s/jobs/restore-drill.yaml
+#   kubectl -n huk wait --for=condition=complete job/huk-restore-drill --timeout=600s
+#   kubectl -n huk logs job/huk-restore-drill
+#   kubectl -n huk delete job huk-restore-drill
+#
+# Restores the newest daily dump into a SCRATCH database (huk_restore_<ts>)
+# and verifies the drill_marker row (id 42) against EXPECT_NOTE. The live
+# database is never touched. The destructive restore OVER the live database
+# is an owner-only, irreversible step (AGENTS.md §3) — RUNBOOK §10.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: huk-restore-drill-script
+  namespace: huk
+data:
+  restore-drill.sh: |
+    #!/bin/sh
+    # Restores the newest (or DUMP_FILE-named) dump into a scratch database
+    # and prints per-table row counts, like deploy/restore.sh did for compose.
+    set -eu
+    export PGPASSWORD="$POSTGRES_PASSWORD"
+    U="-U $POSTGRES_USER"
+    PGDB="${POSTGRES_DB:-huk}"
+
+    dump="${DUMP_FILE:-latest}"
+    if [ "$dump" = "latest" ]; then
+      # shellcheck disable=SC2012
+      dump=$(ls -1t /backups/daily/*.dump 2>/dev/null | head -n 1)
+      if [ -z "$dump" ]; then
+        echo "FAIL: no dumps in /backups/daily — run the backup CronJob first" >&2
+        exit 1
+      fi
+    fi
+    [ -f "$dump" ] || { echo "FAIL: dump not found: $dump" >&2; exit 1; }
+
+    target="huk_restore_$(date -u +%Y%m%d-%H%M%S)"
+    psql $U -d postgres -c "DROP DATABASE IF EXISTS \"$target\"" > /dev/null
+    psql $U -d postgres -c "CREATE DATABASE \"$target\"" > /dev/null
+    if ! pg_restore $U -d "$target" --no-owner "$dump"; then
+      echo "FAIL: pg_restore failed into $target" >&2
+      exit 1
+    fi
+
+    echo "row counts in $target:"
+    psql $U -d "$target" -At \
+      -c "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY 1" |
+    while IFS= read -r t; do
+      [ -n "$t" ] || continue
+      n=$(psql $U -d "$target" -At -c "SELECT count(*) FROM \"$t\"")
+      printf '%s\t%s\n' "$t" "$n"
+    done
+
+    if [ -n "${EXPECT_NOTE:-}" ]; then
+      note=$(psql $U -d "$target" -At -c "SELECT note FROM drill_marker WHERE id = 42")
+      if [ "$note" != "$EXPECT_NOTE" ]; then
+        echo "FAIL: drill_marker note '$note' != expected '$EXPECT_NOTE'" >&2
+        exit 1
+      fi
+      echo "drill_marker verified: $note"
+    fi
+    echo "restored into scratch database $target (live $PGDB untouched)"
+    echo "drop it when done: psql -d postgres -c 'DROP DATABASE \"$target\"'"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: huk-restore-drill
+  namespace: huk
+  labels:
+    app.kubernetes.io/name: huk
+    app.kubernetes.io/component: backups
+spec:
+  # A drill fails loud: no retries on purpose.
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: huk
+        app.kubernetes.io/component: backups
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: restore
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGHOST
+              value: huk-postgres
+            - name: DUMP_FILE
+              value: "latest"
+            # Must match the drill_marker row the drill inserts before the
+            # backup (RUNBOOK §10 / the CI drill).
+            - name: EXPECT_NOTE
+              value: "k8s-drill-marker"
+          envFrom:
+            - secretRef:
+                name: huk-env
+          command: ["sh", "/scripts/restore-drill.sh"]
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi
+              cpu: 500m
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: backups
+              mountPath: /backups
+              readOnly: true
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: backups
+          persistentVolumeClaim:
+            claimName: backup-data
+        - name: script
+          configMap:
+            name: huk-restore-drill-script
