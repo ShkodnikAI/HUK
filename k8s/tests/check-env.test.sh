@@ -69,6 +69,11 @@ variant() {
 # 1. good file -> pass
 expect_ok "$GOOD" "a complete, non-default file passes"
 
+# 1a. quoted values are refused: kubectl --from-env-file keeps quotes
+#     literally (the kind drill saw ALTER USER ""huk"")
+sed 's/^POSTGRES_USER=huk$/POSTGRES_USER="huk"/' "$GOOD" > "$TMP/quoted.env"
+expect_fail "$TMP/quoted.env" "quoted values are refused"
+
 # 2. empty secret (AUTH_SECRET)
 variant AUTH_SECRET ""
 expect_fail "$TMP/variant.env" "empty AUTH_SECRET is refused"
