@@ -119,6 +119,16 @@ NULL, so they cannot be kept keyless) or keyless (the invite they redeemed
 listen sessions, vote flags and their own report contact; `AuditLog` is the
 one intentional export absence (internal accountability, user id only).
 
+Lyrics (`Track.lyrics`, H-123) are personal creative text and follow the
+same S7 discipline (H-311): the account erasure nulls them on every own
+track — all statuses, inside the same erasure transaction — so the text
+never outlives the account, and `exportUserData` includes the caller's own
+lyrics per track id. A track taken down by **moderation** keeps its lyrics
+only while the moderation trail needs them: `takedownTrack` never touches
+the column (the statement of reasons lives on the resolved `Report`, kept
+24 months per the table above), and in the current code nothing else
+removes it — the one path that blanks lyrics is the account erasure.
+
 ## 5. Broadcast timeline
 
 - `BroadcastSlot(seq, trackId, startsAt, endsAt)` is the schedule. Only the

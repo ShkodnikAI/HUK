@@ -874,7 +874,7 @@ describe.skipIf(!databaseUrl)("account export and deletion (H-214)", () => {
     const profile = await db.artistProfile.create({
       data: { userId: user.id, handle: `${tag}-${Math.floor(Math.random() * 1e9)}`, displayName: `${tag} Artist`, bio: "bio" },
     });
-    const track = await db.track.create({ data: { artistId: profile.id, title: `${tag} track`, status: "APPROVED", available: true } });
+    const track = await db.track.create({ data: { artistId: profile.id, title: `${tag} track`, status: "APPROVED", available: true, lyrics: `${tag} own text` } });
     await db.consent.createMany({
       data: [
         { userId: user.id, document: "tos", version: "0.0-draft", ipHash: null },
@@ -902,7 +902,7 @@ describe.skipIf(!databaseUrl)("account export and deletion (H-214)", () => {
     const { exportUserData } = await import("@/server/account/service");
     const doc = (await exportUserData(a.user, { client: db })) as {
       profile: { email: string };
-      tracks: Array<{ title: string }>;
+      tracks: Array<{ title: string; lyrics: string | null }>;
       reactions: Array<{ trackId: string }>;
       comments: Array<{ body: string }>;
       listenEvents: unknown[];
@@ -912,6 +912,8 @@ describe.skipIf(!databaseUrl)("account export and deletion (H-214)", () => {
     };
     expect(doc.profile.email).toBe(a.user.email);
     expect(doc.tracks.map((t) => t.title)).toEqual(["exp-a track"]);
+    // H-311: the artist's own lyrics are part of the export, per track id.
+    expect(doc.tracks[0].lyrics).toBe("exp-a own text");
     expect(doc.reactions).toHaveLength(1);
     expect(doc.reactions[0].trackId).toBe(b.track.id); // a's reaction ON b's track is a's data
     expect(doc.comments.map((c) => c.body)).toEqual(["my comment"]);
@@ -924,6 +926,7 @@ describe.skipIf(!databaseUrl)("account export and deletion (H-214)", () => {
     const raw = JSON.stringify(doc);
     expect(raw).not.toContain(b.user.email);
     expect(raw).not.toContain("exp-b track");
+    expect(raw).not.toContain("exp-b own text"); // H-311: b's lyrics are b's data, not a's
     expect(raw).not.toContain("their comment");
     expect(raw).not.toContain("exp-b list");
     expect(raw).not.toContain(b.user.id);
@@ -982,7 +985,12 @@ describe.skipIf(!databaseUrl)("account export and deletion (H-214)", () => {
 
     // The artist profile is gone; the tracks are TAKEN_DOWN and off the schedule.
     expect(await db.artistProfile.count({ where: { userId: u.user.id } })).toBe(0);
-    expect((await db.track.findUniqueOrThrow({ where: { id: u.track.id } })).status).toBe("TAKEN_DOWN");
+    const ownAfter = await db.track.findUniqueOrThrow({ where: { id: u.track.id } });
+    expect(ownAfter.status).toBe("TAKEN_DOWN");
+    // H-311: the author's lyrics went with the account (same transaction),
+    // while the other author's text stays untouched.
+    expect(ownAfter.lyrics).toBeNull();
+    expect((await db.track.findUniqueOrThrow({ where: { id: other.track.id } })).lyrics).toBe("stay own text");
     expect(await db.broadcastSlot.count({ where: { id: slot.id } })).toBe(0); // retired (H-212)
 
     // Consent rows are kept (they prove what was accepted; hashes only).
@@ -5666,6 +5674,11 @@ describe.skipIf(!databaseUrl)("ranking integrity (H-307)", () => {
 // (the id only) and Consent (kept by design). Every user-keyed column is
 // either handled by the erasure or on an explicit allowlist with a reason,
 // and the introspection guard fails when a future table escapes (fixture).
+// Owned CONTENT columns are considered too (H-311): a personal-data column
+// that lives on rows the account owns through a chain (Track.artistId →
+// ArtistProfile.userId) is not user-keyed, so the query below cannot see
+// it — such a column is listed in ERASURE_HANDLED with the chain that
+// reaches it, and any new one must be added there or it escapes silently.
 describe.skipIf(!databaseUrl)("account erasure completeness (H-308)", () => {
   const db = makeClient();
 
@@ -5692,6 +5705,9 @@ describe.skipIf(!databaseUrl)("account erasure completeness (H-308)", () => {
     "Playlist.ownerId": "deleted",
     "Comment.authorId": "nulled + [removed] placeholder body",
     "Report.reporterId": "nulled (the report survives for moderation, contact removed)",
+    // H-311 — not user-keyed, but owned content: reached through the
+    // artist-profile chain and nulled in the erasure transaction, all statuses.
+    "Track.lyrics": "nulled via the artist-profile chain (Track.artistId → ArtistProfile.userId) inside the erasure transaction, all statuses",
   };
   /** table.column → kept by design, with the reason. */
   const ERASURE_ALLOWLIST: Record<string, string> = {
@@ -5734,7 +5750,10 @@ describe.skipIf(!databaseUrl)("account erasure completeness (H-308)", () => {
     await db.account.create({ data: { userId: user.id, type: "oauth", provider: "test", providerAccountId: `acc-${user.id}` } });
     await db.verificationToken.create({ data: { identifier: user.email, token: `vt-${user.id}`, expires: new Date(Date.now() + 3_600_000) } });
     const profile = await db.artistProfile.create({ data: { userId: user.id, handle: `erased-${Math.floor(Math.random() * 1e9)}`, displayName: "Erased Artist" } });
-    const ownTrack = await db.track.create({ data: { artistId: profile.id, title: "own", status: "APPROVED", available: true } });
+    const ownTrack = await db.track.create({ data: { artistId: profile.id, title: "own", status: "APPROVED", available: true, lyrics: "own lyrics text" } });
+    // H-311 "all statuses": a track moderation already took down before the
+    // account deletion keeps nothing of the author either.
+    const ownTakenDown = await db.track.create({ data: { artistId: profile.id, title: "own taken down", status: "TAKEN_DOWN", available: true, lyrics: "doomed lyrics text" } });
     const otherTrack = await db.track.create({ data: { title: "other", status: "APPROVED", available: true } });
     await db.consent.create({ data: { userId: user.id, document: "tos", version: "0.0-draft", ipHash: null } });
     // Invites: one CREATED by the user (must be deleted), one they REDEEMED (must survive, usedById null).
@@ -5751,7 +5770,7 @@ describe.skipIf(!databaseUrl)("account erasure completeness (H-308)", () => {
     for (const t of [ownTrack, otherTrack]) {
       await db.trackScore.create({ data: { trackId: t.id, categoryKey: "all", score: 0.5, nEff: 20, voters: 11 } });
     }
-    const untouchedTrack = await db.track.create({ data: { title: "untouched", status: "APPROVED", available: true } });
+    const untouchedTrack = await db.track.create({ data: { title: "untouched", status: "APPROVED", available: true, lyrics: "untouched lyrics text" } });
     await db.trackScore.create({ data: { trackId: untouchedTrack.id, categoryKey: "all", score: 0.5, nEff: 20, voters: 11 } });
 
     await deleteAccount(user, { confirmEmail: user.email }, { client: db });
@@ -5785,6 +5804,12 @@ describe.skipIf(!databaseUrl)("account erasure completeness (H-308)", () => {
     // Scores: reacted + listened + own tracks dropped; the sentinel survives.
     expect(await db.trackScore.count({ where: { trackId: { in: [ownTrack.id, otherTrack.id] } } })).toBe(0);
     expect(await db.trackScore.count({ where: { trackId: untouchedTrack.id } })).toBe(1);
+    // H-311: the author's lyrics are nulled on every own track, all statuses
+    // (including the track moderation took down earlier); another author's
+    // text is untouched.
+    expect((await db.track.findUniqueOrThrow({ where: { id: ownTrack.id } })).lyrics).toBeNull();
+    expect((await db.track.findUniqueOrThrow({ where: { id: ownTakenDown.id } })).lyrics).toBeNull();
+    expect((await db.track.findUniqueOrThrow({ where: { id: untouchedTrack.id } })).lyrics).toBe("untouched lyrics text");
     // The user row is anonymised, not deleted.
     const after = await db.user.findUniqueOrThrow({ where: { id: user.id } });
     expect(after.deletedAt).not.toBeNull();
