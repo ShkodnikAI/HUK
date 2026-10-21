@@ -28,3 +28,6 @@ next-env.d.ts
 # Python bytecode
 __pycache__/
 *.pyc
+
+# issue text dumps are dispatcher material, never repo content
+scripts/issue_*.txt

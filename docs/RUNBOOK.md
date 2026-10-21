@@ -64,11 +64,18 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 ```
 
 - `200` — the hub is reachable; proceed.
-- `000`/timeout — create a free Docker Hub account, generate a **read-only**
-  access token, `docker login` on the host (HUK never pushes), and retry. If
-  still blocked, the documented fallback (not implemented): a CI task retags
-  the five images into ghcr.io and the manifests' `images:` prefixes change
-  accordingly — same import workflow afterwards.
+- `000`/timeout — retry the same probe once after a few minutes (a transient
+  outage is not a block). If the retry also fails, **stop**:
+
+  **Stop rule — a blocked registry is never worked around.** No mirrors, no
+  re-publishing or retagging the images into another registry, no proxies
+  for the pull. Registry access is an Owner decision routed through the
+  legal review (D1): report the failed probe to the Owner and hold the
+  first start until they decide.
+
+  The image list above is what the probe protects; nothing else needs the
+  hub. While the probe fails, the stack simply does not start — that is the
+  documented outcome, not a problem to route around.
 
 ## 3. Environment and the `huk-env` secret `[not executed here]`
 
@@ -254,6 +261,15 @@ kubectl -n huk delete job huk-backup-export
 # proves the copies are usable).
 ```
 
+**Exported copies are personal data (S7).** A pg_dump carries listener
+accounts. Every copy moved off the box — `./huk-backups-daily` above and
+anything it is copied into — is kept for at most **35 days** from the
+export date and is then deleted wherever it lives; remove the intermediate
+local directory as soon as the off-site move is done. Keep the copies only
+in storage the Owner controls — never a shared bucket, chat or ticket. The
+in-cluster rotation on the `backup-data` PVC (7 daily + 4 weekly) is
+unchanged.
+
 ## 10. Restore drill (regular) and the destructive restore
 
 The drill restores the newest dump into a **scratch** database and verifies
@@ -283,6 +299,46 @@ kubectl -n huk exec statefulset/huk-postgres -- \
 `$POSTGRES_DB` with `--clean --if-exists`, after scaling the stack down
 (§11) so nothing writes mid-restore. Do it only when the data loss is
 already accepted; the scratch drill above is the safe path.
+
+**Mandatory after a destructive restore: replay the account erasures (S7).**
+A dump restores the world as it was when it was taken — every account
+erased between the dump's timestamp and the restore comes back with its
+data intact. The stack does not serve the public again until each of those
+accounts is erased again:
+
+1. **Capture the list before the restore job overwrites the live database**
+   (the stack is already scaled down; postgres still answers):
+   ```bash
+   kubectl -n huk exec statefulset/huk-postgres -- \
+     psql -U huk -d huk -At -c \
+     "SELECT \"targetId\" FROM \"AuditLog\" WHERE action = 'account.deleted' \
+      AND \"createdAt\" > '<dump timestamp UTC>' ORDER BY \"createdAt\";"
+   ```
+   The dump's UTC stamp is in its file name (§9). The audit row carries the
+   user id only, never the email; the addresses for the notification below
+   are on the restored `User` rows. If the live database no longer answers,
+   take the same list from any retained dump **newer** than the one being
+   restored — deletions after the newest retained copy are unrecoverable;
+   record that gap in the incident report and proceed with everything
+   identifiable.
+2. **Re-run the erasure for every listed account** through the
+   application's own erasure — the transactional path behind
+   `DELETE /api/me` (takedowns first, then the erasure transaction, then a
+   fresh `account.deleted` audit row). Do not improvise it as hand-written
+   SQL: the erasure is business logic (takedowns, score recomputation,
+   audit), not a couple of `UPDATE`s. Today the erasure runs from the
+   signed-in account itself, so the replay means each affected user signs
+   in and re-deletes, or the Owner runs the erasure service for the listed
+   ids as a one-off job; automating that is a tooling card of its own, not
+   a reason to reopen with the data back.
+3. **Verify, then reopen** (§11 brings web back):
+   ```bash
+   kubectl -n huk exec statefulset/huk-postgres -- \
+     psql -U huk -d huk -At -c \
+     "SELECT count(*) FROM \"User\" WHERE id IN (<list>) AND \"deletedAt\" IS NULL;"
+   ```
+   must print `0` — every listed account carries a fresh `deletedAt`, and
+   only then does the site come back.
 
 ## 11. Kill switch `[verified in CI]`
 
